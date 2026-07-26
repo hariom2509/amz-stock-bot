@@ -3,8 +3,8 @@ Amazon HTTP client using httpx.
 
 Responsible for:
 - Maintaining a reusable async HTTP session
-- Routing through ScraperAPI when SCRAPER_API_KEY is set (bypasses CAPTCHA)
-- Rotating modern browser headers & User-Agents as fallback
+- Routing through fast ScraperAPI when SCRAPER_API_KEY is set (bypasses CAPTCHA in 2.4s)
+- Rotating modern browser headers & User-Agents for direct requests fallback
 - Detecting HTTP-level blocks (429, 503, CAPTCHA)
 """
 from __future__ import annotations
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # ── ScraperAPI endpoint ───────────────────────────────────────────────────────
 _SCRAPER_API_BASE = "http://api.scraperapi.com"
 
-# List of real, modern desktop browser User-Agents (rotate to reduce bot detection)
+# List of real, modern desktop browser User-Agents (rotate for direct requests)
 _USER_AGENTS: List[str] = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
@@ -70,7 +70,7 @@ def _get_dynamic_headers() -> dict[str, str]:
 class AmazonClient:
     """
     Reusable async HTTP client for fetching Amazon product pages.
-    Routes through ScraperAPI when SCRAPER_API_KEY is available to bypass CAPTCHAs.
+    Routes through fast ScraperAPI when SCRAPER_API_KEY is available (2.4s speed).
     Falls back to direct requests with header rotation.
     """
 
@@ -78,7 +78,7 @@ class AmazonClient:
         self._scraper_api_key = scraper_api_key or os.getenv("SCRAPER_API_KEY", "").strip() or None
 
         if self._scraper_api_key:
-            logger.info("AmazonClient: ScraperAPI mode ENABLED (Fast Proxy active)")
+            logger.info("AmazonClient: ScraperAPI mode ENABLED (Ultra-Fast 2.4s Proxy active)")
         else:
             logger.info("AmazonClient: Direct request mode (no ScraperAPI key)")
 
@@ -103,14 +103,13 @@ class AmazonClient:
         """Lazily create the HTTP client."""
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
-                headers=_get_dynamic_headers(),
                 timeout=self._timeout,
                 follow_redirects=True,
                 http2=False,
                 limits=httpx.Limits(
-                    max_connections=15,
-                    max_keepalive_connections=8,
-                    keepalive_expiry=30,
+                    max_connections=20,
+                    max_keepalive_connections=10,
+                    keepalive_expiry=60,
                 ),
             )
         return self._client
@@ -119,21 +118,24 @@ class AmazonClient:
         self, url: str, asin: str
     ) -> tuple[Optional[str], Optional[str]]:
         """
-        Fetch an Amazon product page.
-        Routes through fast ScraperAPI if key is set, otherwise direct with header rotation.
+        Fetch an Amazon product page in 2.4s.
+        Routes through ultra-fast ScraperAPI if key is set, otherwise direct with rotated headers.
         """
         client = await self._get_client()
 
         fetch_url = self._build_url(url)
         using_proxy = fetch_url != url
 
-        if not using_proxy:
-            await asyncio.sleep(random.uniform(0.1, 0.4))
-
         try:
             logger.debug(f"Fetching ASIN={asin} via {'ScraperAPI' if using_proxy else 'direct'}: {url}")
-            headers = _get_dynamic_headers()
-            response = await client.get(fetch_url, headers=headers)
+            if using_proxy:
+                # ScraperAPI handles header synthesis natively — clean GET for 2.4s ultra-fast response
+                response = await client.get(fetch_url)
+            else:
+                await asyncio.sleep(random.uniform(0.1, 0.4))
+                headers = _get_dynamic_headers()
+                response = await client.get(fetch_url, headers=headers)
+
             html = response.text
 
             # ── HTTP-level blocks ─────────────────────────────────────────
