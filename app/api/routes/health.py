@@ -14,12 +14,12 @@ router = APIRouter(tags=["Health"])
 _start_time = time.time()
 
 
-@router.get("/health", response_model=HealthResponse)
+@router.api_route("/health", methods=["GET", "HEAD"], response_model=HealthResponse)
 async def health_check(
     request: Request,
     settings: Settings = Depends(get_settings),
 ):
-    """Check backend health, database connection, and scheduler status."""
+    """Check backend health, database connection, and scheduler status (supports GET and HEAD)."""
     db_status = "ok"
     products_count = 0
     try:
