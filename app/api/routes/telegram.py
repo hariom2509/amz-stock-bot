@@ -1,9 +1,13 @@
 """
-Telegram Linking API Routes.
+Telegram Linking & Webhook API Routes.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import asyncio
+import logging
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from telegram import Update
+
 from app.api.dependencies import get_current_user, get_settings
 from app.api.schemas import TelegramLinkResponse, TelegramStatusResponse
 from app.config import Settings
@@ -11,7 +15,23 @@ from app.database import repository as repo
 from app.database.models import User
 from app.telegram import linking as telegram_linking
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/v1/telegram", tags=["Telegram"])
+
+
+@router.post("/webhook")
+async def telegram_webhook(request: Request):
+    """Receive Telegram Webhook updates for zero latency processing."""
+    try:
+        data = await request.json()
+        telegram_app = request.app.state.telegram_app
+        update = Update.de_json(data, telegram_app.bot)
+        asyncio.create_task(telegram_app.process_update(update))
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error(f"Error handling Telegram webhook: {e}", exc_info=True)
+        return {"status": "error"}
 
 
 @router.post("/link", response_model=TelegramLinkResponse)
@@ -38,7 +58,6 @@ async def get_telegram_status(
     settings: Settings = Depends(get_settings),
 ):
     """Check if the current user has connected their Telegram account."""
-    # Refresh user state from database
     fresh_user = await repo.get_user_by_public_id(settings.database_path, current_user.public_id)
     u = fresh_user or current_user
 

@@ -352,7 +352,7 @@ async def _do_immediate_check_and_report(
 
 
 async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Send an interactive card for each watched product with Stop / Start / Remove buttons."""
+    """Send interactive cards concurrently for each watched product with Stop / Start / Remove buttons."""
     settings: Settings = context.bot_data["settings"]
     if not await _check_auth(update, settings):
         return
@@ -370,6 +370,7 @@ async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     await _reply(update, f"👀 <b>YOUR WATCHES ({len(products)})</b>")
 
+    tasks = []
     for i, p in enumerate(products, 1):
         status_text = "Active (Watching 24/7)" if p.monitoring_enabled else "Stopped (Paused)"
         card_text = (
@@ -381,7 +382,11 @@ async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             f"Last Checked: {_format_last_checked(p)}"
         )
         kb = list_item_keyboard(p.asin, p.monitoring_enabled, p.url)
-        await _reply(update, card_text, reply_markup=kb)
+        tasks.append(_reply(update, card_text, reply_markup=kb))
+
+    if tasks:
+        await asyncio.gather(*tasks)
+
 
 
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
