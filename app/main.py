@@ -4,7 +4,7 @@ Application main module — FastAPI app with integrated Telegram Bot and Monitor
 Architecture:
   - Single application process running Uvicorn + FastAPI
   - Lifespan context initializes Database, Telegram Bot, and MonitoringScheduler
-  - Single event loop shares HTTP client, DB connections, and async scheduler
+  - Low-latency polling updater (0.1s poll_interval)
 """
 from __future__ import annotations
 
@@ -34,12 +34,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    Application lifespan context:
-      1. Load settings & logging
-      2. Initialize database
-      3. Create HTTP client & AlertManager
-      4. Start MonitoringScheduler
-      5. Initialize & start Telegram Bot polling
+    Application lifespan context with low-latency bot polling.
     """
     try:
         settings = load_settings()
@@ -60,9 +55,13 @@ async def lifespan(app: FastAPI):
 
     http_client = AmazonClient(timeout_seconds=settings.request_timeout_seconds)
 
+    # Configure Telegram Application with ultra-low latency updates
     telegram_app = (
         Application.builder()
         .token(settings.telegram_bot_token)
+        .get_updates_poll_interval(0.1)
+        .get_updates_read_timeout(10)
+        .get_updates_connect_timeout(10)
         .build()
     )
 
@@ -92,13 +91,18 @@ async def lifespan(app: FastAPI):
     # Start background components
     await scheduler.start()
 
-    logger.info("Starting Telegram bot polling...")
+    logger.info("Starting Telegram bot polling (0.1s ultra-low latency mode)...")
     await telegram_app.initialize()
     await telegram_app.start()
     polling_task = asyncio.create_task(
         telegram_app.updater.start_polling(
             allowed_updates=["message", "callback_query"],
-            drop_pending_updates=True,
+            drop_pending_updates=False,
+            poll_interval=0.1,
+            read_timeout=10,
+            write_timeout=10,
+            connect_timeout=10,
+            bootstrap_retries=-1,
         )
     )
 
