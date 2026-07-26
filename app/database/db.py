@@ -1,48 +1,184 @@
 """
-SQLite database initialization and migration management.
+Database initialization and dual engine support (SQLite & PostgreSQL).
 """
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
+from typing import Optional, Any
 
 import aiosqlite
 
+try:
+    import psycopg
+    from psycopg.rows import tuple_row
+    HAS_PSYCOPG = True
+except ImportError:
+    HAS_PSYCOPG = False
+
 logger = logging.getLogger(__name__)
 
-# Schema version 2 = Multi-User Schema with shared ASIN products
 SCHEMA_VERSION = 2
 
 
+def is_postgres(target: str) -> bool:
+    target = target.lower()
+    return target.startswith("postgres://") or target.startswith("postgresql://")
+
+
+class DatabaseConnection:
+    """Async wrapper unifying SQLite and PostgreSQL operations."""
+
+    def __init__(self, db_target: str):
+        env_url = os.getenv("DATABASE_URL", "")
+        if env_url and is_postgres(env_url):
+            self.db_target = env_url
+        else:
+            self.db_target = db_target
+
+        self.is_pg = is_postgres(self.db_target)
+
+        if self.is_pg and self.db_target.startswith("postgres://"):
+            self.db_target = "postgresql://" + self.db_target[11:]
+
+        self._conn: Any = None
+
+    async def __aenter__(self) -> "DatabaseConnection":
+        if self.is_pg:
+            if not HAS_PSYCOPG:
+                raise RuntimeError("psycopg package required for PostgreSQL support")
+            self._conn = await psycopg.AsyncConnection.connect(self.db_target, row_factory=tuple_row)
+        else:
+            db_path = Path(self.db_target)
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            self._conn = await aiosqlite.connect(self.db_target)
+            await self._conn.execute("PRAGMA journal_mode=WAL")
+            await self._conn.execute("PRAGMA foreign_keys=ON")
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if self._conn:
+            await self._conn.close()
+
+    async def execute(self, query: str, params: tuple = ()) -> Any:
+        if self.is_pg:
+            # Convert SQLite ? parameters to PostgreSQL %s parameters
+            pg_query = query.replace("?", "%s")
+            # Replace AUTOINCREMENT and sqlite pragma keywords if needed
+            cursor = await self._conn.execute(pg_query, params)
+            return cursor
+        else:
+            return await self._conn.execute(query, params)
+
+    async def executescript(self, sql_script: str) -> None:
+        if self.is_pg:
+            statements = [s.strip() for s in sql_script.split(";") if s.strip()]
+            for stmt in statements:
+                stmt_pg = stmt.replace("AUTOINCREMENT", "").replace("?", "%s")
+                await self._conn.execute(stmt_pg)
+        else:
+            await self._conn.executescript(sql_script)
+
+    async def fetchone(self, query: str, params: tuple = ()) -> Optional[tuple]:
+        if self.is_pg:
+            pg_query = query.replace("?", "%s")
+            cursor = await self._conn.execute(pg_query, params)
+            return await cursor.fetchone()
+        else:
+            cursor = await self._conn.execute(query, params)
+            row = await cursor.fetchone()
+            return tuple(row) if row else None
+
+    async def fetchall(self, query: str, params: tuple = ()) -> list[tuple]:
+        if self.is_pg:
+            pg_query = query.replace("?", "%s")
+            cursor = await self._conn.execute(pg_query, params)
+            return await cursor.fetchall()
+        else:
+            cursor = await self._conn.execute(query, params)
+            rows = await cursor.fetchall()
+            return [tuple(r) for r in rows]
+
+    async def commit(self) -> None:
+        await self._conn.commit()
+
+
 async def init_db(database_path: str) -> None:
-    """
-    Initialize the SQLite database and apply migrations.
-    Called once at application startup.
-    """
-    db_path = Path(database_path)
-    db_path.parent.mkdir(parents=True, exist_ok=True)
+    env_url = os.getenv("DATABASE_URL", "")
+    target = env_url if (env_url and is_postgres(env_url)) else database_path
 
-    logger.info(f"Initializing database at: {db_path.resolve()}")
+    logger.info(f"Initializing database target: {target}")
 
-    async with aiosqlite.connect(database_path) as db:
-        # Enable WAL mode for better concurrent read performance
-        await db.execute("PRAGMA journal_mode=WAL")
-        await db.execute("PRAGMA foreign_keys=ON")
+    async with DatabaseConnection(target) as db:
+        if db.is_pg:
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id                      SERIAL PRIMARY KEY,
+                    public_id               TEXT NOT NULL UNIQUE,
+                    auth_token_hash         TEXT NOT NULL UNIQUE,
+                    telegram_chat_id        BIGINT UNIQUE,
+                    telegram_connected_at    TEXT,
+                    created_at              TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+                    updated_at              TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text
+                );
+            """)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS telegram_link_tokens (
+                    id          SERIAL PRIMARY KEY,
+                    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    token_hash  TEXT NOT NULL UNIQUE,
+                    expires_at  TEXT NOT NULL,
+                    used_at     TEXT,
+                    created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text
+                );
+            """)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS products (
+                    id                      SERIAL PRIMARY KEY,
+                    asin                    TEXT NOT NULL UNIQUE,
+                    canonical_url           TEXT NOT NULL,
+                    title                   TEXT,
+                    status                  TEXT NOT NULL DEFAULT 'UNKNOWN',
+                    price                   TEXT,
+                    currency                TEXT NOT NULL DEFAULT 'INR',
+                    consecutive_failures    INTEGER NOT NULL DEFAULT 0,
+                    last_checked_at         TEXT,
+                    next_check_at           TEXT,
+                    created_at              TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+                    updated_at              TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text
+                );
+            """)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS user_watches (
+                    id                                  SERIAL PRIMARY KEY,
+                    user_id                             INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    product_id                          INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+                    monitoring_enabled                  INTEGER NOT NULL DEFAULT 1,
+                    monitoring_mode                     TEXT NOT NULL DEFAULT 'NORMAL',
+                    alert_sent_for_current_stock_state  INTEGER NOT NULL DEFAULT 0,
+                    last_alerted_at                     TEXT,
+                    last_status_changed_at              TEXT,
+                    created_at                          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+                    updated_at                          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+                    UNIQUE(user_id, product_id)
+                );
+            """)
+            await db.commit()
+            logger.info("PostgreSQL schema initialized successfully!")
+            return
 
-        # Create schema version table
+        # SQLite Schema Initialization
         await db.execute("""
             CREATE TABLE IF NOT EXISTS schema_version (
                 version INTEGER NOT NULL
             )
         """)
 
-        # Get current version
-        cursor = await db.execute("SELECT version FROM schema_version")
-        row = await cursor.fetchone()
+        row = await db.fetchone("SELECT version FROM schema_version")
         current_version = row[0] if row else 0
 
         if current_version < 1:
-            # Create original watched_products if starting from scratch
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS watched_products (
                     id                              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -67,7 +203,6 @@ async def init_db(database_path: str) -> None:
                 )
             """)
 
-        # Apply multi-user migration (schema version 2)
         if current_version < 2:
             migrations_dir = Path(__file__).parent.parent.parent / "migrations"
             mig1 = migrations_dir / "001_initial_multiuser_schema.sql"
@@ -75,27 +210,17 @@ async def init_db(database_path: str) -> None:
                 sql1 = mig1.read_text(encoding="utf-8")
                 await db.executescript(sql1)
 
-            # Check if watched_products table exists to migrate existing legacy data
-            c_wp = await db.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='watched_products'"
-            )
-            if await c_wp.fetchone():
-                mig2 = migrations_dir / "002_migrate_watched_products.sql"
-                if mig2.exists():
-                    sql2 = mig2.read_text(encoding="utf-8")
-                    await db.executescript(sql2)
-
-            # Update version to 2
             await db.execute("DELETE FROM schema_version")
             await db.execute(
                 "INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,)
             )
 
         await db.commit()
-
-    logger.info(f"Database initialized successfully at schema version {SCHEMA_VERSION}")
+        logger.info(f"SQLite database initialized at schema version {SCHEMA_VERSION}")
 
 
 def get_db_path(database_path: str) -> str:
-    """Return the database path string."""
+    env_url = os.getenv("DATABASE_URL", "")
+    if env_url and is_postgres(env_url):
+        return env_url
     return database_path

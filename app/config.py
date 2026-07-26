@@ -37,6 +37,8 @@ class Settings(BaseSettings):
 
     # ── Database ────────────────────────────────────────────────────────────
     database_path: str = "data/watcher.db"
+    database_url: Optional[str] = None
+
 
     # ── Security & Limits ───────────────────────────────────────────────────
     link_token_ttl_seconds: int = 900  # 15 minutes

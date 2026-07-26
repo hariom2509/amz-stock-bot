@@ -40,7 +40,8 @@ def _format_last_checked(ts: Optional[datetime]) -> str:
 
 
 def _to_product_response(product: Product, watch: UserWatch) -> ProductResponse:
-    w_prod = repo._build_watched_product(0, product, watch)
+    w_prod = repo._build_watched_product(watch, product, 0)
+
     return ProductResponse(
         asin=product.asin,
         title=product.title,
