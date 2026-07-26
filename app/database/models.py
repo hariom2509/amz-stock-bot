@@ -84,29 +84,20 @@ class Product:
             StockStatus.IN_STOCK: "🟢",
             StockStatus.OUT_OF_STOCK: "🔴",
             StockStatus.UNKNOWN: "❓",
-            StockStatus.BLOCKED: "🚫",
-            StockStatus.ERROR: "⚠️",
+            StockStatus.BLOCKED: "🔴",
+            StockStatus.ERROR: "🔴",
         }.get(self.status, "❓")
-
-    @property
-    def display_price(self) -> str:
-        if self.price:
-            return f"₹{self.price}"
-        return "Price: Unknown"
-
-    @property
-    def display_title(self) -> str:
-        return self.title or f"ASIN: {self.asin}"
 
     @property
     def display_status(self) -> str:
         return {
             StockStatus.IN_STOCK: "In Stock",
             StockStatus.OUT_OF_STOCK: "Out of Stock",
-            StockStatus.UNKNOWN: "Unknown",
-            StockStatus.BLOCKED: "Check Delayed",
-            StockStatus.ERROR: "Temporary Error",
-        }.get(self.status, "Unknown")
+            StockStatus.UNKNOWN: "Out of Stock",
+            StockStatus.BLOCKED: "Out of Stock",
+            StockStatus.ERROR: "Out of Stock",
+        }.get(self.status, "Out of Stock")
+
 
 
 @dataclass
@@ -165,8 +156,8 @@ class WatchedProduct:
             StockStatus.IN_STOCK: "🟢",
             StockStatus.OUT_OF_STOCK: "🔴",
             StockStatus.UNKNOWN: "❓",
-            StockStatus.BLOCKED: "🚫",
-            StockStatus.ERROR: "⚠️",
+            StockStatus.BLOCKED: "🔴",
+            StockStatus.ERROR: "🔴",
         }.get(self.status, "❓")
 
     @property
@@ -188,7 +179,8 @@ class WatchedProduct:
         return {
             StockStatus.IN_STOCK: "In Stock",
             StockStatus.OUT_OF_STOCK: "Out of Stock",
-            StockStatus.UNKNOWN: "Unknown",
-            StockStatus.BLOCKED: "Check Delayed",
-            StockStatus.ERROR: "Check Error",
-        }.get(self.status, "Unknown")
+            StockStatus.UNKNOWN: "Out of Stock",
+            StockStatus.BLOCKED: "Out of Stock",
+            StockStatus.ERROR: "Out of Stock",
+        }.get(self.status, "Out of Stock")
+

@@ -40,22 +40,22 @@ class Settings(BaseSettings):
 
     # ── Security & Limits ───────────────────────────────────────────────────
     link_token_ttl_seconds: int = 900  # 15 minutes
-    max_watches_per_user: int = 5
-    max_turbo_watches_per_user: int = 1
+    max_watches_per_user: int = 50     # Support up to 50 products per user
+    max_turbo_watches_per_user: int = 5
     max_active_unique_products: int = 250
 
-    # ── Monitoring Intervals (Configurable Low Latency) ──────────────────────
-    fast_check_interval_seconds: int = 3
-    fast_jitter_seconds: int = 1
+    # ── Monitoring Intervals (Low Latency with Smart Staggering) ─────────────
+    fast_check_interval_seconds: int = 4
+    fast_jitter_seconds: int = 2
     normal_check_interval_seconds: int = 15
     normal_jitter_seconds: int = 5
     turbo_check_interval_seconds: int = 3
     turbo_jitter_seconds: int = 1
 
     # ── Backoff ─────────────────────────────────────────────────────────────
-    max_failure_backoff_seconds: int = 300
-    max_consecutive_failures: int = 5
-    blocked_cooldown_seconds: int = 180
+    max_failure_backoff_seconds: int = 120
+    max_consecutive_failures: int = 3
+    blocked_cooldown_seconds: int = 30
 
     # ── Concurrency ─────────────────────────────────────────────────────────
     max_concurrent_checks: int = 5

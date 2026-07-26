@@ -3,18 +3,15 @@ Amazon HTTP client using httpx.
 
 Responsible for:
 - Maintaining a reusable async HTTP session
-- Sending browser-like headers to avoid trivial bot detection
-- Detecting HTTP-level blocks (429, 503)
-- Returning raw HTML or raising appropriate exceptions
-
-Does NOT implement any anti-bot bypass techniques.
+- Rotating modern browser headers & User-Agents to prevent cloud IP throttling
+- Detecting HTTP-level blocks (429, 503, CAPTCHA)
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 import random
-from typing import Optional
+from typing import Optional, List
 
 import httpx
 
@@ -22,39 +19,37 @@ from app.amazon.models import ProductState, StockStatus
 
 logger = logging.getLogger(__name__)
 
-# ── Browser-like headers ─────────────────────────────────────────────────────
-# These mimic a regular Chrome browser to avoid trivial blocking.
-# We do NOT spoof fingerprints or rotate proxies.
-_DEFAULT_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/126.0.0.0 Safari/537.36"
-    ),
-    "Accept": (
-        "text/html,application/xhtml+xml,application/xml;"
-        "q=0.9,image/avif,image/webp,image/apng,*/*;"
-        "q=0.8,application/signed-exchange;v=b3;q=0.7"
-    ),
-    "Accept-Language": "en-IN,en;q=0.9,hi;q=0.8",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Connection": "keep-alive",
-    "Upgrade-Insecure-Requests": "1",
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "none",
-    "Sec-Fetch-User": "?1",
-    "Cache-Control": "max-age=0",
-    "DNT": "1",
-}
+# List of real, modern desktop browser User-Agents
+_USER_AGENTS: List[str] = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:127.0) Gecko/20100101 Firefox/127.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0",
+]
+
+
+def _get_dynamic_headers() -> dict[str, str]:
+    ua = random.choice(_USER_AGENTS)
+    return {
+        "User-Agent": ua,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "en-IN,en-US;q=0.9,en;q=0.8",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Referer": "https://www.amazon.in/",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "cross-site",
+        "Sec-Fetch-User": "?1",
+        "Cache-Control": "max-age=0",
+    }
 
 
 class AmazonClient:
     """
     Reusable async HTTP client for fetching Amazon product pages.
-
-    Create once and share across the application lifecycle.
-    Call close() on shutdown.
     """
 
     def __init__(self, timeout_seconds: int = 15) -> None:
@@ -70,13 +65,13 @@ class AmazonClient:
         """Lazily create the HTTP client."""
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
-                headers=_DEFAULT_HEADERS,
+                headers=_get_dynamic_headers(),
                 timeout=self._timeout,
                 follow_redirects=True,
-                http2=False,  # Some proxies don't support H2, keep reliable
+                http2=False,
                 limits=httpx.Limits(
-                    max_connections=10,
-                    max_keepalive_connections=5,
+                    max_connections=15,
+                    max_keepalive_connections=8,
                     keepalive_expiry=30,
                 ),
             )
@@ -86,21 +81,18 @@ class AmazonClient:
         self, url: str, asin: str
     ) -> tuple[Optional[str], Optional[str]]:
         """
-        Fetch an Amazon product page.
-
-        Returns:
-            (html_content, error_message) — one of these will be None.
-
-        Handles:
-            - HTTP 429 / 503 → returns (None, "BLOCKED:...")
-            - Redirect to captcha → returns (None, "BLOCKED:CAPTCHA")
-            - Network errors → returns (None, "ERROR:...")
+        Fetch an Amazon product page with header rotation and micro-jitter.
         """
         client = await self._get_client()
 
+        # Add small micro-jitter (100ms - 400ms) to avoid simultaneous burst bursts
+        await asyncio.sleep(random.uniform(0.1, 0.4))
+
         try:
             logger.debug(f"Fetching URL for ASIN={asin}: {url}")
-            response = await client.get(url)
+            # Rotate headers per request
+            headers = _get_dynamic_headers()
+            response = await client.get(url, headers=headers)
             html = response.text
 
             # ── HTTP-level blocks ─────────────────────────────────────────
@@ -156,17 +148,12 @@ class AmazonClient:
 def _is_captcha_page(html: str, url) -> bool:
     """
     Detect Amazon CAPTCHA / robot check pages.
-
-    Checks both URL redirect (to /errors/validateCaptcha) and
-    page content indicators.
     """
     url_str = str(url).lower()
 
-    # URL-based detection
     if "validatecaptcha" in url_str or "/errors/" in url_str:
         return True
 
-    # Content-based detection (case-insensitive)
     html_lower = html.lower()
     captcha_indicators = [
         "sorry, we just need to make sure you're not a robot",
