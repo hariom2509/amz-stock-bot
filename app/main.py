@@ -16,7 +16,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from telegram import Bot
+from telegram import Bot, BotCommand
 from telegram.ext import Application
 from telegram.request import HTTPXRequest
 
@@ -103,6 +103,22 @@ async def lifespan(app: FastAPI):
     logger.info("Starting Telegram bot polling (0.1s ultra-low latency mode)...")
     await telegram_app.initialize()
     await telegram_app.start()
+
+    # Register Telegram Bot Slash Command Menu for Auto-Completion
+    bot_commands = [
+        BotCommand("start", "Start the bot & get welcome guide"),
+        BotCommand("list", "View all watched Amazon products & live status"),
+        BotCommand("remove", "Remove a product from 24/7 watchlist"),
+        BotCommand("pause", "Pause 24/7 monitoring for a product"),
+        BotCommand("resume", "Resume 24/7 monitoring for a product"),
+        BotCommand("help", "Help & instructions"),
+    ]
+    try:
+        await bot.set_my_commands(bot_commands)
+        logger.info("Registered Telegram bot slash command menu successfully!")
+    except Exception as e:
+        logger.warning(f"Failed to set Telegram bot commands: {e}")
+
     polling_task = asyncio.create_task(
         telegram_app.updater.start_polling(
             allowed_updates=["message", "callback_query"],
