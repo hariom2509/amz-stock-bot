@@ -274,8 +274,12 @@ async def _do_immediate_check_and_report(
     alert_manager: AlertManager = context.bot_data["alert_manager"]
     chat_id = update.effective_chat.id
 
-    html, error = await http_client.fetch_product_page(product.url, product.asin)
-
+    html, error = None, None
+    for attempt in range(3):
+        html, error = await http_client.fetch_product_page(product.url, product.asin)
+        if not error:
+            break
+        await asyncio.sleep(1.0)
 
     if error:
         err_text = (
@@ -295,6 +299,7 @@ async def _do_immediate_check_and_report(
 
         await scheduler.trigger_immediate_check(product)
         return
+
 
 
     state = parse_product_page(html, product.asin)
