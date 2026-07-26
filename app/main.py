@@ -4,7 +4,7 @@ Application main module — FastAPI app with integrated Telegram Bot and Monitor
 Architecture:
   - Single application process running Uvicorn + FastAPI
   - Lifespan context initializes Database, Telegram Bot, and MonitoringScheduler
-  - Low-latency polling updater (0.1s poll_interval)
+  - Low-latency polling updater (0.1s poll_interval with HTTPXRequest)
 """
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from telegram import Bot
 from telegram.ext import Application
+from telegram.request import HTTPXRequest
 
 from app.config import Settings, load_settings
 from app.database.db import init_db
@@ -55,13 +56,18 @@ async def lifespan(app: FastAPI):
 
     http_client = AmazonClient(timeout_seconds=settings.request_timeout_seconds)
 
-    # Configure Telegram Application with ultra-low latency updates
+    # Configure Telegram HTTP Request timeouts
+    tg_request = HTTPXRequest(
+        connection_pool_size=10,
+        read_timeout=10.0,
+        write_timeout=10.0,
+        connect_timeout=10.0,
+    )
+
     telegram_app = (
         Application.builder()
         .token(settings.telegram_bot_token)
-        .get_updates_poll_interval(0.1)
-        .get_updates_read_timeout(10)
-        .get_updates_connect_timeout(10)
+        .request(tg_request)
         .build()
     )
 
@@ -99,9 +105,6 @@ async def lifespan(app: FastAPI):
             allowed_updates=["message", "callback_query"],
             drop_pending_updates=False,
             poll_interval=0.1,
-            read_timeout=10,
-            write_timeout=10,
-            connect_timeout=10,
             bootstrap_retries=-1,
         )
     )
