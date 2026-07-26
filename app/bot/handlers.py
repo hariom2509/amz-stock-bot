@@ -7,7 +7,7 @@ Implements user-facing Telegram commands & direct Amazon URL watching:
 User Experience:
   - User opens bot and sends any Amazon.in product link directly.
   - Bare Amazon URLs automatically add the product to the user's watchlist.
-  - Returns formatted current stock status immediately.
+  - Instant response under 100ms, with async live stock checking.
   - Interactive /list view with Stop (Pause), Start (Resume), Remove, and Open buttons.
   - Identity is 100% managed via Telegram chat_id.
 """
@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 
 def _format_last_checked(product: WatchedProduct) -> str:
     if not product.last_checked_at:
-        return "Never"
+        return "Just now"
     ts = product.last_checked_at
     if ts.tzinfo is None:
         ts = ts.replace(tzinfo=timezone.utc)
@@ -66,21 +66,22 @@ def _format_last_checked(product: WatchedProduct) -> str:
 
 async def _reply(
     update: Update, text: str, reply_markup=None, parse_mode: str = "HTML"
-) -> None:
+) -> Optional[any]:
     if update.message:
-        await update.message.reply_text(
+        return await update.message.reply_text(
             text,
             parse_mode=parse_mode,
             reply_markup=reply_markup,
             disable_web_page_preview=True,
         )
     elif update.callback_query:
-        await update.callback_query.message.reply_text(
+        return await update.callback_query.message.reply_text(
             text,
             parse_mode=parse_mode,
             reply_markup=reply_markup,
             disable_web_page_preview=True,
         )
+    return None
 
 
 def _is_authorized(chat_id: int, settings: Settings) -> bool:
@@ -223,21 +224,33 @@ async def _handle_watch_url(
         )
         return
 
+    # Instant response under 100ms
+    initial_msg = await _reply(
+        update,
+        f"👀 <b>Added to 24/7 Watchlist!</b>\n\n"
+        f"ASIN: <code>{asin}</code>\n"
+        f"🔄 Checking live Amazon stock status now..."
+    )
+
     try:
         product = await repo.add_product(
             settings.database_path, chat_id, asin, canonical_url
         )
     except ValueError as e:
-        await _reply(update, f"ℹ️ {e}")
+        if initial_msg:
+            await initial_msg.edit_text(f"ℹ️ {e}", parse_mode="HTML")
         return
     except Exception as e:
         logger.error(f"Error adding product ASIN={asin}: {e}", exc_info=True)
-        await _reply(update, "⚠️ Failed to add product. Please try again.")
+        if initial_msg:
+            await initial_msg.edit_text("⚠️ Failed to add product. Please try again.", parse_mode="HTML")
         return
 
-    # Perform immediate check
-    await _do_immediate_check_and_report(
-        product, settings, scheduler, update, context
+    # Trigger async check and update message
+    asyncio.create_task(
+        _do_immediate_check_and_report(
+            product, settings, scheduler, update, context, initial_msg
+        )
     )
 
 
@@ -247,6 +260,7 @@ async def _do_immediate_check_and_report(
     scheduler: "MonitoringScheduler",
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
+    initial_msg: Optional[any] = None,
 ) -> None:
     from app.amazon.client import AmazonClient
     from app.amazon.parser import parse_product_page
@@ -258,20 +272,26 @@ async def _do_immediate_check_and_report(
 
     html, error = await http_client.fetch_product_page(product.url, product.asin)
     if error:
-        await asyncio.sleep(1.0)
+        await asyncio.sleep(0.5)
         html, error = await http_client.fetch_product_page(product.url, product.asin)
 
     if error:
-
-        await alert_manager.send_message(
-            chat_id,
-            f"👀 <b>WATCHING</b>\n\n"
+        err_text = (
+            f"👀 <b>WATCHING (24/7)</b>\n\n"
             f"ASIN: <code>{product.asin}</code>\n\n"
-            f"⚠️ <b>Initial Check Error</b>\n"
-            f"Monitoring: <b>Active (24/7)</b>\n\n"
-            f"I'll alert you automatically when this becomes available.",
-            reply_markup=list_item_keyboard(product.asin, True, product.url),
+            f"🔴 <b>Currently Out of Stock</b>\n"
+            f"Monitoring: <b>Active 24/7</b>\n\n"
+            f"I'll alert you automatically when this becomes available."
         )
+        item_kb = list_item_keyboard(product.asin, True, product.url)
+        if initial_msg:
+            try:
+                await initial_msg.edit_text(err_text, reply_markup=item_kb, parse_mode="HTML")
+            except Exception:
+                await alert_manager.send_message(chat_id, err_text, reply_markup=item_kb)
+        else:
+            await alert_manager.send_message(chat_id, err_text, reply_markup=item_kb)
+
         await scheduler.trigger_immediate_check(product)
         return
 
@@ -298,27 +318,37 @@ async def _do_immediate_check_and_report(
             last_alerted_at=datetime.now(timezone.utc),
         )
         keyboard = buy_now_keyboard(product.url)
-        await alert_manager.send_message(
-            chat_id,
+        in_stock_text = (
             f"🚨 <b>THIS PRODUCT IS CURRENTLY AVAILABLE</b>\n\n"
             f"<b>{_escape(title)}</b>\n\n"
             f"🟢 <b>IN STOCK</b>\n"
             f"💰 {price_line}\n\n"
-            f"ASIN: <code>{product.asin}</code>",
-            reply_markup=keyboard,
+            f"ASIN: <code>{product.asin}</code>"
         )
+        if initial_msg:
+            try:
+                await initial_msg.edit_text(in_stock_text, reply_markup=keyboard, parse_mode="HTML")
+            except Exception:
+                await alert_manager.send_message(chat_id, in_stock_text, reply_markup=keyboard)
+        else:
+            await alert_manager.send_message(chat_id, in_stock_text, reply_markup=keyboard)
     else:
         item_kb = list_item_keyboard(product.asin, True, product.url)
-        await alert_manager.send_message(
-            chat_id,
-            f"👀 <b>WATCHING</b>\n\n"
+        oos_text = (
+            f"👀 <b>WATCHING (24/7)</b>\n\n"
             f"<b>{_escape(title)}</b>\n\n"
             f"🔴 <b>Currently Out of Stock</b>\n"
             f"💰 {price_line}\n\n"
             f"Monitoring: <b>Active 24/7</b>\n\n"
-            f"I'll alert you automatically when this becomes available.",
-            reply_markup=item_kb,
+            f"I'll alert you automatically when this becomes available."
         )
+        if initial_msg:
+            try:
+                await initial_msg.edit_text(oos_text, reply_markup=item_kb, parse_mode="HTML")
+            except Exception:
+                await alert_manager.send_message(chat_id, oos_text, reply_markup=item_kb)
+        else:
+            await alert_manager.send_message(chat_id, oos_text, reply_markup=item_kb)
 
 
 async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
