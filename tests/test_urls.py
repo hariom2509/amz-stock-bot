@@ -121,9 +121,5 @@ class TestLooksLikeAmazonUrl:
     def test_random_text(self):
         assert looks_like_amazon_url("hello world") is False
 
-    def test_flipkart_url(self):
-        assert looks_like_amazon_url("https://www.flipkart.com/product/p/itm123") is True
-
     def test_other_shopping_site(self):
-        assert looks_like_amazon_url("https://www.ebay.com/product") is False
-
+        assert looks_like_amazon_url("https://www.flipkart.com/product") is False

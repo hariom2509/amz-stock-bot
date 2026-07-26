@@ -1,5 +1,5 @@
 """
-Per-product watcher logic with structured latency metrics.
+Per-product watcher logic with structured latency metrics and smart restock alert rules.
 """
 from __future__ import annotations
 
@@ -46,23 +46,18 @@ class ProductWatcher:
         asin = product.asin
         now = datetime.now(timezone.utc)
 
-        t_start = time.perf_counter()
-        t_req_start = datetime.now(timezone.utc)
-
         logger.info(
             f"CHECK_START | ASIN={asin} | mode={product.monitoring_mode.value} "
             f"| prev_status={product.status.value}"
         )
 
         html, error = await self.http_client.fetch_product_page(product.url, asin)
-        t_resp_recv = datetime.now(timezone.utc)
 
         if error:
             await self._handle_fetch_error(product, error, now)
             return
 
         state = parse_product_page(html, asin)
-        t_stock_detected = datetime.now(timezone.utc)
 
         new_status = _map_status(state.status)
 
@@ -78,6 +73,7 @@ class ProductWatcher:
             product.monitoring_mode,
             self.settings,
             failures=0,
+            status=new_status,
         )
 
         should_alert = False
@@ -89,12 +85,13 @@ class ProductWatcher:
             logger.info(f"STOCK_TRANSITION | ASIN={asin} | {product.status.value} → {new_status.value}")
 
         if new_status == StockStatus.IN_STOCK:
+            # Alert only ONCE when transitioning to IN_STOCK
             if state.is_confident_in_stock and not product.alert_sent_for_current_stock_state:
                 should_alert = True
                 alert_sent_flag = True
         elif new_status in (StockStatus.OUT_OF_STOCK, StockStatus.UNKNOWN):
-            if product.status == StockStatus.IN_STOCK:
-                alert_sent_flag = False
+            # Reset alert flag when item goes out of stock so restock alerts trigger again
+            alert_sent_flag = False
 
         await repo.update_product_state(
             self.settings.database_path,
@@ -123,7 +120,6 @@ class ProductWatcher:
     async def check_shared_product(self, product: Product) -> None:
         """
         Check a shared Product instance and fan-out alerts to all subscribed user watches.
-        Calculates structured metrics for latency tracing.
         """
         asin = product.asin
         now = datetime.now(timezone.utc)
@@ -162,7 +158,7 @@ class ProductWatcher:
         )
 
         status_changed = new_status != product.status
-        next_check = _compute_next_check(effective_mode, self.settings, failures=0)
+        next_check = _compute_next_check(effective_mode, self.settings, failures=0, status=new_status)
 
         await repo.update_shared_product_state(
             self.settings.database_path,
@@ -190,8 +186,8 @@ class ProductWatcher:
                         should_alert = True
                         alert_sent_flag = True
                 elif new_status in (StockStatus.OUT_OF_STOCK, StockStatus.UNKNOWN):
-                    if product.status == StockStatus.IN_STOCK:
-                        alert_sent_flag = False
+                    # Reset alert flag so future restocks alert again
+                    alert_sent_flag = False
 
                 await repo.update_user_watch_state(
                     self.settings.database_path,
@@ -234,6 +230,7 @@ class ProductWatcher:
             product.monitoring_mode,
             self.settings,
             failures=new_failures,
+            status=new_status,
         )
 
         status_to_save = new_status
@@ -264,7 +261,7 @@ class ProductWatcher:
 
         logger.warning(f"SHARED_CHECK_FAILURE | ASIN={asin} | error={error} | failures={new_failures}")
 
-        next_check = _compute_next_check(mode, self.settings, failures=new_failures)
+        next_check = _compute_next_check(mode, self.settings, failures=new_failures, status=new_status)
 
         status_to_save = new_status
         if product.status == StockStatus.IN_STOCK:
@@ -334,24 +331,27 @@ def _compute_next_check(
     mode: MonitoringMode,
     settings: Settings,
     failures: int,
+    status: StockStatus = StockStatus.UNKNOWN,
 ) -> datetime:
     now = datetime.now(timezone.utc)
 
-    if mode == MonitoringMode.TURBO:
-        base = float(settings.turbo_check_interval_seconds)
+    # While IN_STOCK, take a clean 30-second break interval to avoid spamming requests
+    if status == StockStatus.IN_STOCK and failures == 0:
+        delay = 30.0
+        jitter_max = 5.0
+    elif mode == MonitoringMode.TURBO:
+        delay = float(settings.turbo_check_interval_seconds)
         jitter_max = float(settings.turbo_jitter_seconds)
     else:
-        base = float(settings.fast_check_interval_seconds)
+        delay = float(settings.fast_check_interval_seconds)
         jitter_max = float(settings.fast_jitter_seconds)
 
     if failures > 0:
         backoff = min(
-            base * (2 ** (failures - 1)),
+            delay * (2 ** (failures - 1)),
             float(settings.max_failure_backoff_seconds),
         )
         delay = backoff
-    else:
-        delay = base
 
     jitter = random.uniform(0, jitter_max)
     total_delay = delay + jitter

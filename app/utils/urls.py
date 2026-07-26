@@ -1,53 +1,64 @@
 """
-Amazon and Flipkart URL normalization, ID extraction, and Affiliate URL building.
+Amazon URL normalization, ASIN extraction, and Affiliate URL building.
 
-Supports:
-  - Amazon.in: /dp/ASIN, /gp/product/ASIN, amzn.in/d/ASIN
-  - Flipkart: flipkart.com/product/p/itm..., dl.flipkart.com, fkrt.co
+Supports common Amazon.in URL formats:
+  - https://www.amazon.in/dp/ASIN
+  - https://www.amazon.in/gp/product/ASIN
+  - https://www.amazon.in/some-product-name/dp/ASIN
+  - https://www.amazon.in/dp/ASIN?ref=...&tag=...
+  - https://amzn.in/d/ASIN  (short links)
 """
 from __future__ import annotations
 
 import re
-import urllib.parse
 from urllib.parse import urlparse, parse_qs
 from typing import Optional, Tuple
 
-# ASIN / FSN patterns
+# ASIN: exactly 10 alphanumeric characters, uppercase
 ASIN_PATTERN = re.compile(r"\b([A-Z0-9]{10})\b")
-FLIPKART_PID_PATTERN = re.compile(r"\b(ITM[A-Z0-9]{12,16}|[A-Z0-9]{16})\b", re.IGNORECASE)
 
-# Supported Domains
-SUPPORTED_AMAZON_DOMAINS = {"amazon.in", "www.amazon.in", "amzn.in"}
-SUPPORTED_FLIPKART_DOMAINS = {"flipkart.com", "www.flipkart.com", "dl.flipkart.com", "fkrt.co", "fkrt.it"}
-ALL_SUPPORTED_DOMAINS = SUPPORTED_AMAZON_DOMAINS | SUPPORTED_FLIPKART_DOMAINS
+# Supported Amazon domains
+SUPPORTED_DOMAINS = {
+    "amazon.in",
+    "www.amazon.in",
+    "amzn.in",
+}
 
-CANONICAL_AMAZON_BASE = "https://www.amazon.in/dp/{asin}"
+# Canonical base URL
+CANONICAL_BASE = "https://www.amazon.in/dp/{asin}"
 
-# Default Affiliate Parameters
-DEFAULT_AMAZON_TAG = "cashkacom-21"
-DEFAULT_AMAZON_ASCSUBTAG = "CHKR20260726A442944725"
-DEFAULT_FLIPKART_AFFILIATE_URL = "https://fkrt.co/t1d3OJ"
+# Default CashKaro Affiliate Parameters
+DEFAULT_AFFILIATE_TAG = "cashkacom-21"
+DEFAULT_AFFILIATE_ASCSUBTAG = "CHKR20260726A442944725"
 
 
 def extract_asin(url: str) -> Optional[str]:
-    """Extract ASIN from an Amazon URL."""
+    """
+    Extract ASIN from an Amazon URL.
+
+    Returns the 10-character ASIN string or None if not found.
+    """
     parsed = urlparse(url.strip())
 
+    # Handle short links: amzn.in/d/ASIN
     if parsed.netloc in ("amzn.in",):
         parts = [p for p in parsed.path.split("/") if p]
         for part in parts:
             if ASIN_PATTERN.fullmatch(part.upper()):
                 return part.upper()
 
+    # Standard paths: /dp/ASIN or /gp/product/ASIN
     dp_match = re.search(r"/(?:dp|gp/product)/([A-Z0-9]{10})", parsed.path.upper())
     if dp_match:
         return dp_match.group(1)
 
+    # Fallback: look for any 10-char alphanumeric in path segments
     path_parts = [p for p in parsed.path.split("/") if p]
     for part in path_parts:
         if ASIN_PATTERN.fullmatch(part.upper()):
             return part.upper()
 
+    # Try query parameter 'asin'
     qs = parse_qs(parsed.query)
     for key in ("asin", "ASIN"):
         if key in qs:
@@ -58,101 +69,58 @@ def extract_asin(url: str) -> Optional[str]:
     return None
 
 
-def extract_flipkart_pid(url: str) -> Optional[str]:
-    """Extract Product ID / FSN from a Flipkart URL."""
-    url_clean = url.strip()
-    parsed = urlparse(url_clean)
-
-    qs = parse_qs(parsed.query)
-    for key in ("pid", "PID", "fsn", "FSN"):
-        if key in qs:
-            candidate = qs[key][0].strip()
-            if candidate:
-                return candidate.upper()
-
-    itm_match = re.search(r"/(itm[a-z0-9]{12,16})", parsed.path.lower())
-    if itm_match:
-        return itm_match.group(1).upper()
-
-    parts = [p for p in parsed.path.split("/") if p]
-    for part in parts:
-        if FLIPKART_PID_PATTERN.fullmatch(part):
-            return part.upper()
-
-    if parsed.netloc in ("fkrt.co", "fkrt.it"):
-        part = parsed.path.strip("/")
-        if part:
-            return f"FK_{part.upper()}"
-
-    return None
-
-
 def is_amazon_url(url: str) -> bool:
+    """Return True if the URL is from a supported Amazon domain."""
     try:
         parsed = urlparse(url.strip())
-        return parsed.scheme in ("http", "https") and parsed.netloc.lower() in SUPPORTED_AMAZON_DOMAINS
-    except Exception:
-        return False
-
-
-def is_flipkart_url(url: str) -> bool:
-    try:
-        parsed = urlparse(url.strip())
-        return parsed.scheme in ("http", "https") and parsed.netloc.lower() in SUPPORTED_FLIPKART_DOMAINS
+        if parsed.scheme not in ("http", "https"):
+            return False
+        netloc = parsed.netloc.lower()
+        return netloc in SUPPORTED_DOMAINS
     except Exception:
         return False
 
 
 def normalize_url(url: str) -> Optional[Tuple[str, str]]:
     """
-    Normalize Amazon or Flipkart URL to canonical form.
-    Returns (canonical_url, item_id).
+    Normalize an Amazon URL to canonical form.
+
+    Returns:
+        (canonical_url, asin) tuple if successful
+        None if the URL is invalid or ASIN cannot be extracted
     """
     url = url.strip()
 
-    if is_amazon_url(url):
-        asin = extract_asin(url)
-        if asin:
-            return CANONICAL_AMAZON_BASE.format(asin=asin), asin
+    if not is_amazon_url(url):
+        return None
 
-    if is_flipkart_url(url):
-        pid = extract_flipkart_pid(url)
-        if pid:
-            clean_base = url.split("?")[0].strip()
-            if clean_base.endswith("/"):
-                clean_base = clean_base[:-1]
-            if "pid=" in url.lower():
-                canonical = f"{clean_base}"
-            else:
-                canonical = f"{clean_base}?pid={pid}"
-            return canonical, pid
+    asin = extract_asin(url)
+    if not asin:
+        return None
 
-    return None
+    canonical = CANONICAL_BASE.format(asin=asin)
+    return canonical, asin
 
 
 def build_affiliate_url(
     url: str,
-    amazon_tag: str = DEFAULT_AMAZON_TAG,
-    amazon_ascsubtag: str = DEFAULT_AMAZON_ASCSUBTAG,
-    flipkart_affiliate_base: str = DEFAULT_FLIPKART_AFFILIATE_URL,
+    tag: str = DEFAULT_AFFILIATE_TAG,
+    ascsubtag: str = DEFAULT_AFFILIATE_ASCSUBTAG,
 ) -> str:
     """
-    Build affiliate URL for Amazon or Flipkart.
-    Preserves exact product target URL for Flipkart redirection.
+    Attach affiliate tracking parameters (tag and ascsubtag) to an Amazon product URL.
+    Example: https://www.amazon.in/dp/B0CX5N22N3?tag=cashkacom-21&ascsubtag=CHKR20260726A442944725
     """
-    if "flipkart" in url.lower() or "fkrt" in url.lower():
-        if url.strip() == flipkart_affiliate_base:
-            return url
-        quoted_url = urllib.parse.quote(url, safe="")
-        return f"{flipkart_affiliate_base}?url={quoted_url}"
-    else:
-        clean_url = url.split("?")[0].strip()
-        return f"{clean_url}?tag={amazon_tag}&ascsubtag={amazon_ascsubtag}"
+    clean_url = url.split("?")[0].strip()
+    return f"{clean_url}?tag={tag}&ascsubtag={ascsubtag}"
 
 
 def looks_like_amazon_url(text: str) -> bool:
-    """Quick check: does this text look like an Amazon or Flipkart product URL?"""
+    """
+    Quick check: does this text look like it could be an Amazon URL?
+    Used to handle bare URLs sent without /watch command.
+    """
     text = text.strip().lower()
-    has_domain = any(domain in text for domain in ("amazon.in", "amzn.in", "flipkart.com", "fkrt.co", "fkrt.it"))
-    has_scheme = "http" in text or text.startswith("www.")
-    return has_domain and has_scheme
+    return (
+        "amazon.in" in text or "amzn.in" in text
+    ) and ("http" in text or text.startswith("www."))

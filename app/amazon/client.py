@@ -52,15 +52,14 @@ class AmazonClient:
     Reusable async HTTP client for fetching Amazon product pages.
     """
 
-    def __init__(self, timeout_seconds: int = 4) -> None:
+    def __init__(self, timeout_seconds: int = 15) -> None:
         self._timeout = httpx.Timeout(
-            connect=3.0,
+            connect=10.0,
             read=float(timeout_seconds),
-            write=3.0,
-            pool=3.0,
+            write=5.0,
+            pool=5.0,
         )
         self._client: Optional[httpx.AsyncClient] = None
-
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Lazily create the HTTP client."""
