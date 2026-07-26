@@ -277,9 +277,8 @@ async def _do_immediate_check_and_report(
         err_text = (
             f"👀 <b>WATCHING (24/7)</b>\n\n"
             f"ASIN: <code>{product.asin}</code>\n\n"
-            f"🔴 <b>Currently Out of Stock</b>\n"
-            f"Monitoring: <b>Active 24/7</b>\n\n"
-            f"I'll alert you automatically when this becomes available."
+            f"⏳ <b>Monitoring Active (Checking status...)</b>\n\n"
+            f"I'll alert you automatically as soon as stock updates."
         )
         item_kb = list_item_keyboard(product.asin, True, product.url)
         if initial_msg:
@@ -292,6 +291,7 @@ async def _do_immediate_check_and_report(
 
         await scheduler.trigger_immediate_check(product)
         return
+
 
     state = parse_product_page(html, product.asin)
 
