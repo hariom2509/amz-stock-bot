@@ -75,27 +75,28 @@ class AmazonClient:
     """
 
     def __init__(self, timeout_seconds: int = 15, scraper_api_key: Optional[str] = None) -> None:
-        # Accept from argument or from env var directly
         self._scraper_api_key = scraper_api_key or os.getenv("SCRAPER_API_KEY", "").strip() or None
 
         if self._scraper_api_key:
-            logger.info("AmazonClient: ScraperAPI mode ENABLED (CAPTCHA bypass active)")
+            logger.info("AmazonClient: ScraperAPI mode ENABLED (Fast Proxy active)")
         else:
             logger.info("AmazonClient: Direct request mode (no ScraperAPI key)")
 
+        read_timeout = 25.0 if self._scraper_api_key else float(timeout_seconds)
+
         self._timeout = httpx.Timeout(
             connect=10.0,
-            read=float(timeout_seconds),
+            read=read_timeout,
             write=5.0,
             pool=5.0,
         )
         self._client: Optional[httpx.AsyncClient] = None
 
     def _build_url(self, url: str) -> str:
-        """Build the fetch URL — routes through ScraperAPI if key is configured."""
+        """Build the fetch URL — routes through fast ScraperAPI if key is configured."""
         if self._scraper_api_key:
             encoded = quote_plus(url)
-            return f"{_SCRAPER_API_BASE}?api_key={self._scraper_api_key}&url={encoded}&country_code=in&render=false"
+            return f"{_SCRAPER_API_BASE}?api_key={self._scraper_api_key}&url={encoded}"
         return url
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -119,7 +120,7 @@ class AmazonClient:
     ) -> tuple[Optional[str], Optional[str]]:
         """
         Fetch an Amazon product page.
-        Routes through ScraperAPI if key is set, otherwise direct with header rotation.
+        Routes through fast ScraperAPI if key is set, otherwise direct with header rotation.
         """
         client = await self._get_client()
 
@@ -127,7 +128,6 @@ class AmazonClient:
         using_proxy = fetch_url != url
 
         if not using_proxy:
-            # Add small jitter for direct requests to avoid burst detection
             await asyncio.sleep(random.uniform(0.1, 0.4))
 
         try:
@@ -142,7 +142,7 @@ class AmazonClient:
                 return None, "BLOCKED:HTTP_429"
 
             if response.status_code == 403 and using_proxy:
-                logger.warning(f"ScraperAPI 403 — possibly invalid key or quota exceeded for ASIN={asin}")
+                logger.warning(f"ScraperAPI 403 — invalid key or quota exceeded for ASIN={asin}")
                 return None, "BLOCKED:SCRAPER_403"
 
             if response.status_code == 503:
@@ -158,7 +158,7 @@ class AmazonClient:
             # ── CAPTCHA / robot check detection ──────────────────────────
             if _is_captcha_page(html, response.url):
                 if using_proxy:
-                    logger.warning(f"CAPTCHA page still returned via ScraperAPI for ASIN={asin} — quota may be exhausted")
+                    logger.warning(f"CAPTCHA page returned via ScraperAPI for ASIN={asin}")
                     return None, "BLOCKED:SCRAPER_CAPTCHA"
                 else:
                     logger.warning(f"CAPTCHA page detected for ASIN={asin}")
