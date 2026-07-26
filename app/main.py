@@ -4,7 +4,7 @@ Application main module — FastAPI app with integrated Telegram Bot and Monitor
 Architecture:
   - Single application process running Uvicorn + FastAPI
   - Lifespan context initializes Database, Telegram Bot, and MonitoringScheduler
-  - Low-latency polling updater (0.1s poll_interval with HTTPXRequest)
+  - Zero-delay polling updater (0.0s poll_interval with drop_pending_updates=True)
 """
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    Application lifespan context with low-latency bot polling.
+    Application lifespan context with zero-latency bot polling.
     """
     try:
         settings = load_settings()
@@ -45,7 +45,7 @@ async def lifespan(app: FastAPI):
 
     setup_logging(level=settings.log_level, log_file=settings.log_file)
     logger.info("=" * 60)
-    logger.info("Amazon Stock Watcher (Hosted FastAPI + Bot) starting up")
+    logger.info("Amazon & Flipkart Stock Watcher (Hosted FastAPI + Bot) starting up")
     logger.info(f"Database: {settings.database_path}")
     logger.info(f"Bot Username: @{settings.bot_username}")
     logger.info(f"Max watches per user: {settings.max_watches_per_user}")
@@ -56,12 +56,12 @@ async def lifespan(app: FastAPI):
 
     http_client = AmazonClient(timeout_seconds=settings.request_timeout_seconds)
 
-    # Configure Telegram HTTP Request timeouts
+    # Configure Telegram HTTP Request timeouts for zero latency
     tg_request = HTTPXRequest(
-        connection_pool_size=10,
-        read_timeout=10.0,
-        write_timeout=10.0,
-        connect_timeout=10.0,
+        connection_pool_size=20,
+        read_timeout=5.0,
+        write_timeout=5.0,
+        connect_timeout=5.0,
     )
 
     telegram_app = (
@@ -97,14 +97,15 @@ async def lifespan(app: FastAPI):
     # Start background components
     await scheduler.start()
 
-    logger.info("Starting Telegram bot polling (0.1s ultra-low latency mode)...")
+    logger.info("Starting Telegram bot polling (zero-delay mode)...")
     await telegram_app.initialize()
     await telegram_app.start()
     polling_task = asyncio.create_task(
         telegram_app.updater.start_polling(
             allowed_updates=["message", "callback_query"],
-            drop_pending_updates=False,
-            poll_interval=0.1,
+            drop_pending_updates=True,
+            poll_interval=0.0,
+            timeout=5,
             bootstrap_retries=-1,
         )
     )
