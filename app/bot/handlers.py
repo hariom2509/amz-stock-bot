@@ -224,13 +224,17 @@ async def _handle_watch_url(
         )
         return
 
-    # Instant response under 100ms
+    # Instant response under 50ms with full card and action buttons
+    item_kb = list_item_keyboard(asin, True, canonical_url)
     initial_msg = await _reply(
         update,
         f"👀 <b>Added to 24/7 Watchlist!</b>\n\n"
-        f"ASIN: <code>{asin}</code>\n"
-        f"🔄 Checking live Amazon stock status now..."
+        f"ASIN: <code>{asin}</code>\n\n"
+        f"⏳ <b>Monitoring Active (Checking status...)</b>\n\n"
+        f"I'll alert you automatically as soon as stock updates.",
+        reply_markup=item_kb,
     )
+
 
     try:
         product = await repo.add_product(
