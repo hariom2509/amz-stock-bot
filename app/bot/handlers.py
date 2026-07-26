@@ -116,16 +116,19 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             return
 
     text = (
-        "👋 <b>Amazon Stock Watcher</b>\n\n"
-        "Send me an Amazon.in product link and I'll monitor it automatically.\n\n"
-        "<b>Example:</b>\n"
+        "⚡ <b>Amazon Stock Watcher</b>\n\n"
+        "This is an automated 24/7 Amazon stock monitoring bot. "
+        "It continuously monitors Amazon products and sends you an instant alert within seconds when stock is updated!\n\n"
+        "👨‍💻 <b>Specifically created by Hari</b>\n\n"
+        "📌 <b>How to use:</b>\n"
+        "Send me an Amazon.in product link and I'll monitor it automatically:\n"
         "<code>https://www.amazon.in/dp/B0XXXXXXXXXX</code>\n\n"
-        "When it becomes available, I'll alert you automatically!\n\n"
         "<b>Commands:</b>\n"
         "/list — View all your active watches\n"
         "/help — Command reference"
     )
     await _reply(update, text)
+
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
