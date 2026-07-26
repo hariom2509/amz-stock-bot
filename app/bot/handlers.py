@@ -257,8 +257,12 @@ async def _do_immediate_check_and_report(
     chat_id = update.effective_chat.id
 
     html, error = await http_client.fetch_product_page(product.url, product.asin)
+    if error:
+        await asyncio.sleep(1.0)
+        html, error = await http_client.fetch_product_page(product.url, product.asin)
 
     if error:
+
         await alert_manager.send_message(
             chat_id,
             f"👀 <b>WATCHING</b>\n\n"
