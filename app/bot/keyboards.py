@@ -10,10 +10,12 @@ from app.utils.urls import build_affiliate_url
 
 
 def buy_now_keyboard(url: str) -> InlineKeyboardMarkup:
-    """Keyboard with a single 'BUY NOW' affiliate button linking to the product."""
+    """Keyboard with store-specific 'BUY NOW' affiliate button."""
     affiliate_url = build_affiliate_url(url)
+    is_fk = "flipkart" in url.lower() or "fkrt" in url.lower()
+    label = "🛒 BUY ON FLIPKART" if is_fk else "🛒 BUY ON AMAZON"
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🛒 BUY NOW", url=affiliate_url)]
+        [InlineKeyboardButton(label, url=affiliate_url)]
     ])
 
 
@@ -32,18 +34,20 @@ def product_action_keyboard(asin: str) -> InlineKeyboardMarkup:
 
 
 def list_item_keyboard(asin: str, is_active: bool, url: str) -> InlineKeyboardMarkup:
-    """Inline keyboard attached to items in /list with interactive Stop/Start toggle and affiliate link."""
+    """Inline keyboard attached to items in /list with interactive Stop/Start toggle and store-specific affiliate link."""
     toggle_btn = (
         InlineKeyboardButton("🛑 Stop", callback_data=f"pause:{asin}")
         if is_active
         else InlineKeyboardButton("▶️ Start", callback_data=f"resume:{asin}")
     )
     affiliate_url = build_affiliate_url(url)
+    is_fk = "flipkart" in url.lower() or "fkrt" in url.lower() or asin.startswith("FK_")
+    open_label = "🔗 Open Flipkart" if is_fk else "🔗 Open Amazon"
     return InlineKeyboardMarkup([
         [
             toggle_btn,
             InlineKeyboardButton("🗑 Remove", callback_data=f"remove:{asin}"),
-            InlineKeyboardButton("🔗 Open Amazon", url=affiliate_url),
+            InlineKeyboardButton(open_label, url=affiliate_url),
         ]
     ])
 

@@ -1,15 +1,12 @@
 """
 Telegram Bot Command Handlers (Telegram-First Architecture).
 
-Implements user-facing Telegram commands & direct Amazon URL watching:
+Implements user-facing Telegram commands & direct Amazon / Flipkart URL watching:
   /start, /help, /list, /status, /check, /remove, /pause, /resume, /turbo, /normal
 
 User Experience:
-  - User opens bot and sends any Amazon.in product link directly.
-  - Bare Amazon URLs automatically add the product to the user's watchlist.
-  - Instant response under 100ms, with async live stock checking.
-  - Interactive /list view with Stop (Pause), Start (Resume), Remove, and Open buttons.
-  - Identity is 100% managed via Telegram chat_id.
+  - User opens bot and sends any Amazon.in or Flipkart.com product link directly.
+  - Sub-second instant confirmation with store-specific labels and affiliate routing.
 """
 from __future__ import annotations
 
@@ -161,7 +158,6 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _reply(update, text)
 
 
-
 async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     settings: Settings = context.bot_data["settings"]
     scheduler: "MonitoringScheduler" = context.bot_data["scheduler"]
@@ -172,8 +168,10 @@ async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.args:
         await _reply(
             update,
-            "❌ Please provide an Amazon URL.\n\n"
-            "Example: <code>https://www.amazon.in/dp/B0XXXXXXXXXX</code>"
+            "❌ Please provide an Amazon or Flipkart URL.\n\n"
+            "Example:\n"
+            "<code>https://www.amazon.in/dp/B0XXXXXXXXXX</code>\n"
+            "<code>https://www.flipkart.com/p/p/itm...</code>"
         )
         return
 
@@ -194,13 +192,18 @@ async def _handle_watch_url(
     if result is None:
         await _reply(
             update,
-            "❌ I couldn't recognize that Amazon product URL.\n\n"
-            "Please send a valid Amazon.in product link.\n"
-            "Example: <code>https://www.amazon.in/dp/B0XXXXXXXXXX</code>"
+            "❌ I couldn't recognize that product URL.\n\n"
+            "Please send a valid Amazon.in or Flipkart.com product link.\n"
+            "Example:\n"
+            "• Amazon: <code>https://www.amazon.in/dp/B0XXXXXXXXXX</code>\n"
+            "• Flipkart: <code>https://www.flipkart.com/p/p/itm...</code>"
         )
         return
 
     canonical_url, asin = result
+    is_flipkart = "flipkart" in canonical_url.lower() or "fkrt" in canonical_url.lower() or asin.startswith("FK_")
+    store_name = "Flipkart" if is_flipkart else "Amazon"
+    id_label = "ID" if is_flipkart else "ASIN"
 
     # Check watch count limit for user
     count = await repo.count_products_for_chat(settings.database_path, chat_id)
@@ -209,7 +212,7 @@ async def _handle_watch_url(
             update,
             f"⚠️ <b>Watch limit reached.</b>\n\n"
             f"You're already monitoring {count} products (max limit: {settings.max_watches_per_user}).\n"
-            f"Use /remove &lt;ASIN&gt; to remove one before adding another."
+            f"Use /remove &lt;ID&gt; to remove one before adding another."
         )
         return
 
@@ -217,9 +220,9 @@ async def _handle_watch_url(
     if existing:
         await _reply(
             update,
-            f"ℹ️ You're already watching this product.\n\n"
+            f"ℹ️ You're already watching this {store_name} product.\n\n"
             f"<b>{_escape(existing.display_title)}</b>\n"
-            f"ASIN: <code>{asin}</code>\n"
+            f"{id_label}: <code>{asin}</code>\n"
             f"Status: {existing.status_emoji} {existing.display_status}\n\n"
             f"Use /list to manage your watches.",
             reply_markup=list_item_keyboard(existing.asin, existing.monitoring_enabled, existing.url),
@@ -229,9 +232,9 @@ async def _handle_watch_url(
     # Instant response under 100ms
     initial_msg = await _reply(
         update,
-        f"👀 <b>Added to 24/7 Watchlist!</b>\n\n"
-        f"ASIN: <code>{asin}</code>\n"
-        f"🔄 Checking live Amazon stock status now..."
+        f"👀 <b>Added to 24/7 {store_name} Watchlist!</b>\n\n"
+        f"{id_label}: <code>{asin}</code>\n"
+        f"🔄 Checking live {store_name} stock status now..."
     )
 
     try:
@@ -243,7 +246,7 @@ async def _handle_watch_url(
             await initial_msg.edit_text(f"ℹ️ {e}", parse_mode="HTML")
         return
     except Exception as e:
-        logger.error(f"Error adding product ASIN={asin}: {e}", exc_info=True)
+        logger.error(f"Error adding product ID={asin}: {e}", exc_info=True)
         if initial_msg:
             await initial_msg.edit_text("⚠️ Failed to add product. Please try again.", parse_mode="HTML")
         return
@@ -272,15 +275,16 @@ async def _do_immediate_check_and_report(
     alert_manager: AlertManager = context.bot_data["alert_manager"]
     chat_id = update.effective_chat.id
 
+    is_flipkart = "flipkart" in product.url.lower() or "fkrt" in product.url.lower() or product.asin.startswith("FK_")
+    store_name = "Flipkart" if is_flipkart else "Amazon"
+    id_label = "ID" if is_flipkart else "ASIN"
+
     html, error = await http_client.fetch_product_page(product.url, product.asin)
-    if error:
-        await asyncio.sleep(0.5)
-        html, error = await http_client.fetch_product_page(product.url, product.asin)
 
     if error:
         err_text = (
-            f"👀 <b>WATCHING (24/7)</b>\n\n"
-            f"ASIN: <code>{product.asin}</code>\n\n"
+            f"👀 <b>{store_name.upper()} WATCHING (24/7)</b>\n\n"
+            f"{id_label}: <code>{product.asin}</code>\n\n"
             f"🔴 <b>Currently Out of Stock</b>\n"
             f"Monitoring: <b>Active 24/7</b>\n\n"
             f"I'll alert you automatically when this becomes available."
@@ -309,7 +313,7 @@ async def _do_immediate_check_and_report(
         consecutive_failures=0,
     )
 
-    title = state.title or f"ASIN: {product.asin}"
+    title = state.title or f"{id_label}: {product.asin}"
     price_line = f"₹{state.price}" if state.price else "Price: Unknown"
 
     if state.status == AmazonStatus.IN_STOCK and state.is_confident_in_stock:
@@ -321,11 +325,11 @@ async def _do_immediate_check_and_report(
         )
         keyboard = buy_now_keyboard(product.url)
         in_stock_text = (
-            f"🚨 <b>THIS PRODUCT IS CURRENTLY AVAILABLE</b>\n\n"
+            f"🚨 <b>THIS {store_name.upper()} PRODUCT IS CURRENTLY AVAILABLE</b>\n\n"
             f"<b>{_escape(title)}</b>\n\n"
             f"🟢 <b>IN STOCK</b>\n"
             f"💰 {price_line}\n\n"
-            f"ASIN: <code>{product.asin}</code>"
+            f"{id_label}: <code>{product.asin}</code>"
         )
         if initial_msg:
             try:
@@ -337,7 +341,7 @@ async def _do_immediate_check_and_report(
     else:
         item_kb = list_item_keyboard(product.asin, True, product.url)
         oos_text = (
-            f"👀 <b>WATCHING (24/7)</b>\n\n"
+            f"👀 <b>{store_name.upper()} WATCHING (24/7)</b>\n\n"
             f"<b>{_escape(title)}</b>\n\n"
             f"🔴 <b>Currently Out of Stock</b>\n"
             f"💰 {price_line}\n\n"
@@ -349,8 +353,6 @@ async def _do_immediate_check_and_report(
                 await initial_msg.edit_text(oos_text, reply_markup=item_kb, parse_mode="HTML")
             except Exception:
                 await alert_manager.send_message(chat_id, oos_text, reply_markup=item_kb)
-        else:
-            await alert_manager.send_message(chat_id, oos_text, reply_markup=item_kb)
 
 
 async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -366,7 +368,7 @@ async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await _reply(
             update,
             "👀 You're not watching any products yet.\n\n"
-            "Send me an Amazon.in link to start watching!"
+            "Send me an Amazon.in or Flipkart.com link to start watching!"
         )
         return
 
@@ -374,11 +376,14 @@ async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     for i, p in enumerate(products, 1):
         status_text = "Active (Watching 24/7)" if p.monitoring_enabled else "Stopped (Paused)"
+        is_fk = "flipkart" in p.url.lower() or "fkrt" in p.url.lower() or p.asin.startswith("FK_")
+        id_lbl = "ID" if is_fk else "ASIN"
+
         card_text = (
             f"<b>{i}. {_escape(p.display_title)}</b>\n\n"
             f"Status: {p.status_emoji} <b>{p.display_status}</b>\n"
             f"Price: <b>{p.display_price}</b>\n"
-            f"ASIN: <code>{p.asin}</code>\n"
+            f"{id_lbl}: <code>{p.asin}</code>\n"
             f"Monitoring: <b>{status_text}</b>\n"
             f"Last Checked: {_format_last_checked(p)}"
         )
@@ -392,7 +397,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     if not context.args:
-        await _reply(update, "Usage: <code>/status ASIN</code>")
+        await _reply(update, "Usage: <code>/status ID</code>")
         return
 
     asin = context.args[0].strip().upper()
@@ -400,7 +405,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     product = await repo.get_product(settings.database_path, chat_id, asin)
     if not product:
-        await _reply(update, f"❌ No product with ASIN <code>{asin}</code> found in your watchlist.")
+        await _reply(update, f"❌ No product with ID <code>{asin}</code> found in your watchlist.")
         return
 
     await _reply(
@@ -417,7 +422,7 @@ async def cmd_check(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     if not context.args:
-        await _reply(update, "Usage: <code>/check ASIN</code>")
+        await _reply(update, "Usage: <code>/check ID</code>")
         return
 
     asin = context.args[0].strip().upper()
@@ -425,7 +430,7 @@ async def cmd_check(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     product = await repo.get_product(settings.database_path, chat_id, asin)
     if not product:
-        await _reply(update, f"❌ No product with ASIN <code>{asin}</code> found.")
+        await _reply(update, f"❌ No product with ID <code>{asin}</code> found.")
         return
 
     await _reply(update, f"🔄 Checking <code>{asin}</code> now...")
@@ -438,7 +443,7 @@ async def cmd_remove(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     if not context.args:
-        await _reply(update, "Usage: <code>/remove ASIN</code>")
+        await _reply(update, "Usage: <code>/remove ID</code>")
         return
 
     asin = context.args[0].strip().upper()
@@ -446,14 +451,14 @@ async def cmd_remove(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     product = await repo.get_product(settings.database_path, chat_id, asin)
     if not product:
-        await _reply(update, f"❌ No product with ASIN <code>{asin}</code> found.")
+        await _reply(update, f"❌ No product with ID <code>{asin}</code> found.")
         return
 
     await _reply(
         update,
         f"⚠️ Are you sure you want to remove monitoring for:\n\n"
         f"<b>{_escape(product.display_title)}</b>\n"
-        f"ASIN: <code>{asin}</code>",
+        f"ID: <code>{asin}</code>",
         reply_markup=confirm_remove_keyboard(asin),
     )
 
@@ -464,7 +469,7 @@ async def cmd_pause(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     if not context.args:
-        await _reply(update, "Usage: <code>/pause ASIN</code>")
+        await _reply(update, "Usage: <code>/pause ID</code>")
         return
 
     asin = context.args[0].strip().upper()
@@ -472,7 +477,7 @@ async def cmd_pause(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     found = await repo.set_monitoring_enabled(settings.database_path, chat_id, asin, False)
     if not found:
-        await _reply(update, f"❌ No product with ASIN <code>{asin}</code> found.")
+        await _reply(update, f"❌ No product with ID <code>{asin}</code> found.")
         return
 
     await _reply(
@@ -488,7 +493,7 @@ async def cmd_resume(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     if not context.args:
-        await _reply(update, "Usage: <code>/resume ASIN</code>")
+        await _reply(update, "Usage: <code>/resume ID</code>")
         return
 
     asin = context.args[0].strip().upper()
@@ -496,7 +501,7 @@ async def cmd_resume(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     found = await repo.set_monitoring_enabled(settings.database_path, chat_id, asin, True)
     if not found:
-        await _reply(update, f"❌ No product with ASIN <code>{asin}</code> found.")
+        await _reply(update, f"❌ No product with ID <code>{asin}</code> found.")
         return
 
     product = await repo.get_product(settings.database_path, chat_id, asin)
@@ -517,7 +522,7 @@ async def cmd_turbo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     if not context.args:
-        await _reply(update, "Usage: <code>/turbo ASIN</code>")
+        await _reply(update, "Usage: <code>/turbo ID</code>")
         return
 
     asin = context.args[0].strip().upper()
@@ -529,14 +534,14 @@ async def cmd_turbo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             update,
             f"⚠️ You already have another product in ⚡ Turbo mode:\n\n"
             f"<b>{_escape(existing_turbo.display_title)}</b>\n"
-            f"ASIN: <code>{existing_turbo.asin}</code>\n\n"
+            f"ID: <code>{existing_turbo.asin}</code>\n\n"
             f"Use /normal {existing_turbo.asin} first, then retry."
         )
         return
 
     product = await repo.get_product(settings.database_path, chat_id, asin)
     if not product:
-        await _reply(update, f"❌ No product with ASIN <code>{asin}</code> found.")
+        await _reply(update, f"❌ No product with ID <code>{asin}</code> found.")
         return
 
     await repo.set_monitoring_mode(
@@ -547,7 +552,7 @@ async def cmd_turbo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         update,
         f"⚡ <b>Turbo mode enabled</b> for:\n\n"
         f"<b>{_escape(product.display_title)}</b>\n"
-        f"ASIN: <code>{asin}</code>"
+        f"ID: <code>{asin}</code>"
     )
 
 
@@ -557,7 +562,7 @@ async def cmd_normal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     if not context.args:
-        await _reply(update, "Usage: <code>/normal ASIN</code>")
+        await _reply(update, "Usage: <code>/normal ID</code>")
         return
 
     asin = context.args[0].strip().upper()
@@ -567,7 +572,7 @@ async def cmd_normal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         settings.database_path, chat_id, asin, MonitoringMode.NORMAL
     )
     if not found:
-        await _reply(update, f"❌ No product with ASIN <code>{asin}</code> found.")
+        await _reply(update, f"❌ No product with ID <code>{asin}</code> found.")
         return
 
     await _reply(
@@ -577,7 +582,7 @@ async def cmd_normal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 
 async def handle_bare_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle plain Amazon URLs sent without any command."""
+    """Handle plain Amazon or Flipkart URLs sent without any command."""
     settings: Settings = context.bot_data["settings"]
     scheduler: "MonitoringScheduler" = context.bot_data["scheduler"]
 
@@ -662,7 +667,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             except Exception:
                 pass
         await query.message.reply_text(
-            f"▶️ Monitoring <b>resumed</b> for <code>{asin}</code>.\nChecking Amazon now...",
+            f"▶️ Monitoring <b>resumed</b> for <code>{asin}</code>.\nChecking store now...",
             parse_mode="HTML",
         )
 
@@ -680,11 +685,13 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 def _format_product_detail(product: WatchedProduct) -> str:
     mode_str = "⚡ Turbo" if product.monitoring_mode == MonitoringMode.TURBO else "🔄 Normal"
     monitoring_str = "✅ Active (24/7)" if product.monitoring_enabled else "🛑 Stopped (Paused)"
+    is_fk = "flipkart" in product.url.lower() or "fkrt" in product.url.lower() or product.asin.startswith("FK_")
+    id_lbl = "ID" if is_fk else "ASIN"
 
     lines = [
         f"📦 <b>{_escape(product.display_title)}</b>",
         "",
-        f"ASIN: <code>{product.asin}</code>",
+        f"{id_lbl}: <code>{product.asin}</code>",
         f"Status: {product.status_emoji} <b>{product.display_status}</b>",
         f"Price: <b>{product.display_price}</b>",
         f"Mode: {mode_str} | {monitoring_str}",
@@ -721,4 +728,4 @@ def register_handlers(app: Application) -> None:
 
     app.add_handler(CallbackQueryHandler(handle_callback_query))
 
-    logger.info("All Telegram handlers registered (Telegram-First Architecture)")
+    logger.info("All Telegram handlers registered (Store-Aware Amazon & Flipkart Architecture)")
