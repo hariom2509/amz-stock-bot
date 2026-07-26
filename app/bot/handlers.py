@@ -338,6 +338,22 @@ async def _do_immediate_check_and_report(
                 await alert_manager.send_message(chat_id, in_stock_text, reply_markup=keyboard)
         else:
             await alert_manager.send_message(chat_id, in_stock_text, reply_markup=keyboard)
+
+        # Also send dedicated push alert notification
+        from app.database.models import Product as CoreProduct
+        alert_prod = CoreProduct(
+            id=product.id,
+            asin=product.asin,
+            canonical_url=product.canonical_url,
+            title=title,
+            status=StockStatus.IN_STOCK,
+            price=state.price,
+        )
+        try:
+            await alert_manager.send_in_stock_alert_to(chat_id, alert_prod, datetime.now(timezone.utc))
+        except Exception as e:
+            logger.error(f"Failed to send immediate push alert: {e}")
+
     else:
         item_kb = list_item_keyboard(product.asin, True, product.url)
         oos_text = (

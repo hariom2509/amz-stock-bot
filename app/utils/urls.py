@@ -22,7 +22,6 @@ SUPPORTED_FLIPKART_DOMAINS = {"flipkart.com", "www.flipkart.com", "dl.flipkart.c
 ALL_SUPPORTED_DOMAINS = SUPPORTED_AMAZON_DOMAINS | SUPPORTED_FLIPKART_DOMAINS
 
 CANONICAL_AMAZON_BASE = "https://www.amazon.in/dp/{asin}"
-CANONICAL_FLIPKART_BASE = "https://www.flipkart.com/p/p/itm?pid={pid}"
 
 # Default Affiliate Parameters
 DEFAULT_AMAZON_TAG = "cashkacom-21"
@@ -64,7 +63,6 @@ def extract_flipkart_pid(url: str) -> Optional[str]:
     url_clean = url.strip()
     parsed = urlparse(url_clean)
 
-    # Check query param pid=...
     qs = parse_qs(parsed.query)
     for key in ("pid", "PID", "fsn", "FSN"):
         if key in qs:
@@ -72,18 +70,15 @@ def extract_flipkart_pid(url: str) -> Optional[str]:
             if candidate:
                 return candidate.upper()
 
-    # Check path for /itm...
     itm_match = re.search(r"/(itm[a-z0-9]{12,16})", parsed.path.lower())
     if itm_match:
         return itm_match.group(1).upper()
 
-    # Check path segments
     parts = [p for p in parsed.path.split("/") if p]
     for part in parts:
         if FLIPKART_PID_PATTERN.fullmatch(part):
             return part.upper()
 
-    # If short link fkrt.co/xxxx, generate ID from path
     if parsed.netloc in ("fkrt.co", "fkrt.it"):
         part = parsed.path.strip("/")
         if part:
@@ -123,9 +118,14 @@ def normalize_url(url: str) -> Optional[Tuple[str, str]]:
     if is_flipkart_url(url):
         pid = extract_flipkart_pid(url)
         if pid:
-            if pid.startswith("FK_"):
-                return url, pid
-            return f"https://www.flipkart.com/p/p/itm?pid={pid}", pid
+            clean_base = url.split("?")[0].strip()
+            if clean_base.endswith("/"):
+                clean_base = clean_base[:-1]
+            if "pid=" in url.lower():
+                canonical = f"{clean_base}"
+            else:
+                canonical = f"{clean_base}?pid={pid}"
+            return canonical, pid
 
     return None
 
@@ -138,15 +138,14 @@ def build_affiliate_url(
 ) -> str:
     """
     Build affiliate URL for Amazon or Flipkart.
+    Preserves exact product target URL for Flipkart redirection.
     """
     if "flipkart" in url.lower() or "fkrt" in url.lower():
-        # Flipkart Affiliate link format
-        if "fkrt.co" in url:
+        if url.strip() == flipkart_affiliate_base:
             return url
-        quoted_url = urllib.parse.quote(url)
-        return f"{flipkart_affiliate_base}?link={quoted_url}"
+        quoted_url = urllib.parse.quote(url, safe="")
+        return f"{flipkart_affiliate_base}?url={quoted_url}"
     else:
-        # Amazon Affiliate link format
         clean_url = url.split("?")[0].strip()
         return f"{clean_url}?tag={amazon_tag}&ascsubtag={amazon_ascsubtag}"
 
