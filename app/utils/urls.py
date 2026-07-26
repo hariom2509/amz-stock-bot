@@ -1,5 +1,5 @@
 """
-Amazon URL normalization and ASIN extraction utilities.
+Amazon URL normalization, ASIN extraction, and Affiliate URL building.
 
 Supports common Amazon.in URL formats:
   - https://www.amazon.in/dp/ASIN
@@ -27,6 +27,10 @@ SUPPORTED_DOMAINS = {
 # Canonical base URL
 CANONICAL_BASE = "https://www.amazon.in/dp/{asin}"
 
+# Default CashKaro Affiliate Parameters
+DEFAULT_AFFILIATE_TAG = "cashkacom-21"
+DEFAULT_AFFILIATE_ASCSUBTAG = "CHKR20260726A442944725"
+
 
 def extract_asin(url: str) -> Optional[str]:
     """
@@ -38,14 +42,12 @@ def extract_asin(url: str) -> Optional[str]:
 
     # Handle short links: amzn.in/d/ASIN
     if parsed.netloc in ("amzn.in",):
-        # Path like /d/B0XXXXXXXX or /ASIN directly
         parts = [p for p in parsed.path.split("/") if p]
         for part in parts:
             if ASIN_PATTERN.fullmatch(part.upper()):
                 return part.upper()
 
     # Standard paths: /dp/ASIN or /gp/product/ASIN
-    # Match /dp/{ASIN} or /gp/product/{ASIN}
     dp_match = re.search(r"/(?:dp|gp/product)/([A-Z0-9]{10})", parsed.path.upper())
     if dp_match:
         return dp_match.group(1)
@@ -98,6 +100,19 @@ def normalize_url(url: str) -> Optional[Tuple[str, str]]:
 
     canonical = CANONICAL_BASE.format(asin=asin)
     return canonical, asin
+
+
+def build_affiliate_url(
+    url: str,
+    tag: str = DEFAULT_AFFILIATE_TAG,
+    ascsubtag: str = DEFAULT_AFFILIATE_ASCSUBTAG,
+) -> str:
+    """
+    Attach affiliate tracking parameters (tag and ascsubtag) to an Amazon product URL.
+    Example: https://www.amazon.in/dp/B0CX5N22N3?tag=cashkacom-21&ascsubtag=CHKR20260726A442944725
+    """
+    clean_url = url.split("?")[0].strip()
+    return f"{clean_url}?tag={tag}&ascsubtag={ascsubtag}"
 
 
 def looks_like_amazon_url(text: str) -> bool:
