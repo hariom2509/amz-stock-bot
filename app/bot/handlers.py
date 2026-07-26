@@ -250,12 +250,11 @@ async def _handle_watch_url(
             await initial_msg.edit_text("⚠️ Failed to add product. Please try again.", parse_mode="HTML")
         return
 
-    # Trigger async check and update message
-    asyncio.create_task(
-        _do_immediate_check_and_report(
-            product, settings, scheduler, update, context, initial_msg
-        )
+    # Await check & update message directly to guarantee message card edits cleanly
+    await _do_immediate_check_and_report(
+        product, settings, scheduler, update, context, initial_msg
     )
+
 
 
 async def _do_immediate_check_and_report(
