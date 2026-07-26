@@ -83,20 +83,20 @@ class Product:
         return {
             StockStatus.IN_STOCK: "🟢",
             StockStatus.OUT_OF_STOCK: "🔴",
-            StockStatus.UNKNOWN: "❓",
-            StockStatus.BLOCKED: "🔴",
-            StockStatus.ERROR: "🔴",
-        }.get(self.status, "❓")
+            StockStatus.UNKNOWN: "⏳",
+            StockStatus.BLOCKED: "⏳",
+            StockStatus.ERROR: "⚠️",
+        }.get(self.status, "⏳")
 
     @property
     def display_status(self) -> str:
         return {
             StockStatus.IN_STOCK: "In Stock",
             StockStatus.OUT_OF_STOCK: "Out of Stock",
-            StockStatus.UNKNOWN: "Out of Stock",
-            StockStatus.BLOCKED: "Out of Stock",
-            StockStatus.ERROR: "Out of Stock",
-        }.get(self.status, "Out of Stock")
+            StockStatus.UNKNOWN: "Checking...",
+            StockStatus.BLOCKED: "Checking...",
+            StockStatus.ERROR: "Check Error",
+        }.get(self.status, "Checking...")
 
 
 
@@ -155,10 +155,10 @@ class WatchedProduct:
         return {
             StockStatus.IN_STOCK: "🟢",
             StockStatus.OUT_OF_STOCK: "🔴",
-            StockStatus.UNKNOWN: "❓",
-            StockStatus.BLOCKED: "🔴",
-            StockStatus.ERROR: "🔴",
-        }.get(self.status, "❓")
+            StockStatus.UNKNOWN: "⏳",
+            StockStatus.BLOCKED: "⏳",
+            StockStatus.ERROR: "⚠️",
+        }.get(self.status, "⏳")
 
     @property
     def mode_emoji(self) -> str:
@@ -179,8 +179,8 @@ class WatchedProduct:
         return {
             StockStatus.IN_STOCK: "In Stock",
             StockStatus.OUT_OF_STOCK: "Out of Stock",
-            StockStatus.UNKNOWN: "Out of Stock",
-            StockStatus.BLOCKED: "Out of Stock",
-            StockStatus.ERROR: "Out of Stock",
-        }.get(self.status, "Out of Stock")
+            StockStatus.UNKNOWN: "Checking...",
+            StockStatus.BLOCKED: "Checking...",
+            StockStatus.ERROR: "Check Error",
+        }.get(self.status, "Checking...")
 
