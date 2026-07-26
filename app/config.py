@@ -47,12 +47,13 @@ class Settings(BaseSettings):
     max_active_unique_products: int = 250
 
     # ── Monitoring Intervals (Low Latency with Smart Staggering) ─────────────
-    fast_check_interval_seconds: int = 4
-    fast_jitter_seconds: int = 2
-    normal_check_interval_seconds: int = 15
+    fast_check_interval_seconds: int = 15
+    fast_jitter_seconds: int = 3
+    normal_check_interval_seconds: int = 30
     normal_jitter_seconds: int = 5
-    turbo_check_interval_seconds: int = 3
+    turbo_check_interval_seconds: int = 5
     turbo_jitter_seconds: int = 1
+
 
     # ── Backoff ─────────────────────────────────────────────────────────────
     max_failure_backoff_seconds: int = 120
