@@ -558,10 +558,6 @@ async def get_product(
 async def list_products_for_chat(
     db_path: str, chat_id: int
 ) -> List[WatchedProduct]:
-    user = await get_user_by_chat_id(db_path, chat_id)
-    if not user:
-        return []
-
     async with DatabaseConnection(db_path) as db:
         rows = await db.fetchall(
             """
@@ -570,12 +566,13 @@ async def list_products_for_chat(
                    uw.created_at, uw.updated_at,
                    p.id, p.asin, p.canonical_url, p.title, p.status, p.price, p.currency,
                    p.consecutive_failures, p.last_checked_at, p.next_check_at, p.created_at, p.updated_at
-            FROM user_watches uw
+            FROM users u
+            JOIN user_watches uw ON uw.user_id = u.id
             JOIN products p ON p.id = uw.product_id
-            WHERE uw.user_id = ?
+            WHERE u.telegram_chat_id = ?
             ORDER BY uw.created_at DESC
             """,
-            (user.id,),
+            (chat_id,),
         )
         results = []
         for r in rows:
@@ -616,22 +613,30 @@ async def list_active_products(db_path: str) -> List[WatchedProduct]:
 
 
 async def count_products_for_chat(db_path: str, chat_id: int) -> int:
-    user = await get_user_by_chat_id(db_path, chat_id)
-    if not user:
-        return 0
-    return await count_user_watches(db_path, user.id)
+    async with DatabaseConnection(db_path) as db:
+        row = await db.fetchone(
+            """
+            SELECT COUNT(*) FROM user_watches
+            WHERE user_id = (SELECT id FROM users WHERE telegram_chat_id = ?)
+            """,
+            (chat_id,),
+        )
+        return row[0] if row else 0
 
 
 async def remove_product(db_path: str, chat_id: int, asin: str) -> bool:
-    user = await get_user_by_chat_id(db_path, chat_id)
-    if not user:
-        return False
+    async with DatabaseConnection(db_path) as db:
+        await db.execute(
+            """
+            DELETE FROM user_watches
+            WHERE user_id = (SELECT id FROM users WHERE telegram_chat_id = ?)
+              AND product_id = (SELECT id FROM products WHERE asin = ?)
+            """,
+            (chat_id, asin),
+        )
+        await db.commit()
+        return True
 
-    product = await get_product_by_asin(db_path, asin)
-    if not product:
-        return False
-
-    return await remove_user_watch(db_path, user.id, product.id)
 
 
 async def set_monitoring_enabled(

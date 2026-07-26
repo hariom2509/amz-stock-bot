@@ -447,18 +447,12 @@ async def cmd_remove(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     asin = context.args[0].strip().upper()
     chat_id = update.effective_chat.id
 
-    product = await repo.get_product(settings.database_path, chat_id, asin)
-    if not product:
-        await _reply(update, f"❌ No product with ASIN <code>{asin}</code> found.")
-        return
+    removed = await repo.remove_product(settings.database_path, chat_id, asin)
+    if removed:
+        await _reply(update, f"🗑 Removed <code>{asin}</code> from your watchlist.")
+    else:
+        await _reply(update, f"❌ Product <code>{asin}</code> not found in your watchlist.")
 
-    await _reply(
-        update,
-        f"⚠️ Are you sure you want to remove monitoring for:\n\n"
-        f"<b>{_escape(product.display_title)}</b>\n"
-        f"ASIN: <code>{asin}</code>",
-        reply_markup=confirm_remove_keyboard(asin),
-    )
 
 
 async def cmd_pause(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

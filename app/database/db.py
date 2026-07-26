@@ -1,5 +1,5 @@
 """
-Database initialization and dual engine support (SQLite & PostgreSQL).
+Database initialization and dual engine support (SQLite & PostgreSQL Connection Pooling).
 """
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ import aiosqlite
 try:
     import psycopg
     from psycopg.rows import tuple_row
+    from psycopg_pool import AsyncConnectionPool
     HAS_PSYCOPG = True
 except ImportError:
     HAS_PSYCOPG = False
@@ -21,14 +22,34 @@ logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 2
 
+# Global Connection Pool for PostgreSQL
+_PG_POOL: Optional[Any] = None
+
 
 def is_postgres(target: str) -> bool:
     target = target.lower()
     return target.startswith("postgres://") or target.startswith("postgresql://")
 
 
+async def get_pg_pool(db_url: str) -> Any:
+    global _PG_POOL
+    if _PG_POOL is None:
+        if db_url.startswith("postgres://"):
+            db_url = "postgresql://" + db_url[11:]
+        _PG_POOL = AsyncConnectionPool(
+            conninfo=db_url,
+            min_size=2,
+            max_size=10,
+            open=False,
+            kwargs={"row_factory": tuple_row},
+        )
+        await _PG_POOL.open()
+        logger.info("PostgreSQL AsyncConnectionPool opened successfully!")
+    return _PG_POOL
+
+
 class DatabaseConnection:
-    """Async wrapper unifying SQLite and PostgreSQL operations."""
+    """Async wrapper unifying SQLite and pooled PostgreSQL operations."""
 
     def __init__(self, db_target: str):
         env_url = os.getenv("DATABASE_URL", "")
@@ -38,17 +59,19 @@ class DatabaseConnection:
             self.db_target = db_target
 
         self.is_pg = is_postgres(self.db_target)
-
         if self.is_pg and self.db_target.startswith("postgres://"):
             self.db_target = "postgresql://" + self.db_target[11:]
 
         self._conn: Any = None
+        self._pool_conn_ctx: Any = None
 
     async def __aenter__(self) -> "DatabaseConnection":
         if self.is_pg:
             if not HAS_PSYCOPG:
                 raise RuntimeError("psycopg package required for PostgreSQL support")
-            self._conn = await psycopg.AsyncConnection.connect(self.db_target, row_factory=tuple_row)
+            pool = await get_pg_pool(self.db_target)
+            self._pool_conn_ctx = pool.connection()
+            self._conn = await self._pool_conn_ctx.__aenter__()
         else:
             db_path = Path(self.db_target)
             db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -58,14 +81,16 @@ class DatabaseConnection:
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        if self._conn:
-            await self._conn.close()
+        if self.is_pg:
+            if self._pool_conn_ctx:
+                await self._pool_conn_ctx.__aexit__(exc_type, exc_val, exc_tb)
+        else:
+            if self._conn:
+                await self._conn.close()
 
     async def execute(self, query: str, params: tuple = ()) -> Any:
         if self.is_pg:
-            # Convert SQLite ? parameters to PostgreSQL %s parameters
             pg_query = query.replace("?", "%s")
-            # Replace AUTOINCREMENT and sqlite pragma keywords if needed
             cursor = await self._conn.execute(pg_query, params)
             return cursor
         else:
