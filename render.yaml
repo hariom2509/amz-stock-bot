@@ -4,10 +4,6 @@ services:
     env: docker
     plan: free
     dockerfilePath: ./Dockerfile
-    disk:
-      name: watcher_db_disk
-      mountPath: /app/data
-      sizeGB: 1
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         sync: false
