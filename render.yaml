@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: amazon-stock-watcher
+    env: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: BOT_USERNAME
+        value: price_tracker_by_hari_bot
+      - key: FAST_CHECK_INTERVAL_SECONDS
+        value: "3"
+      - key: MAX_CONCURRENT_CHECKS
+        value: "5"
+      - key: DATABASE_PATH
+        value: data/watcher.db

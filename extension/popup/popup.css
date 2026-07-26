@@ -1,0 +1,276 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+body {
+  width: 400px;
+  background-color: #0f172a;
+  color: #f8fafc;
+  padding: 14px;
+  font-size: 13px;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.logo {
+  font-size: 18px;
+}
+
+.title {
+  font-weight: 700;
+  font-size: 15px;
+  color: #38bdf8;
+}
+
+.settings-btn {
+  cursor: pointer;
+  font-size: 16px;
+  opacity: 0.75;
+  transition: opacity 0.2s;
+}
+
+.settings-btn:hover {
+  opacity: 1;
+}
+
+.status-bar {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  background: #1e293b;
+  padding: 6px 10px;
+  border-radius: 6px;
+  margin-bottom: 12px;
+  color: #94a3b8;
+}
+
+.status-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.dot {
+  font-size: 9px;
+}
+.dot.green { color: #22c55e; }
+.dot.red { color: #ef4444; }
+.dot.yellow { color: #eab308; }
+
+.card {
+  background: #1e293b;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 12px;
+  border: 1px solid #334155;
+}
+
+.telegram-banner {
+  background: #0284c7;
+  border-color: #38bdf8;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.banner-text {
+  font-size: 11px;
+  color: #f0f9ff;
+  line-height: 1.3;
+}
+
+.add-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.input-group {
+  display: flex;
+  gap: 6px;
+}
+
+input[type="text"] {
+  flex: 1;
+  background: #0f172a;
+  border: 1px solid #334155;
+  color: #f8fafc;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  outline: none;
+}
+
+input[type="text"]:focus {
+  border-color: #38bdf8;
+}
+
+.btn {
+  border: none;
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-weight: 600;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.btn-primary {
+  background: #0284c7;
+  color: #ffffff;
+}
+.btn-primary:hover {
+  background: #0369a1;
+}
+
+.btn-secondary {
+  background: #334155;
+  color: #f8fafc;
+}
+.btn-secondary:hover {
+  background: #475569;
+}
+
+.btn-sm {
+  padding: 5px 9px;
+  font-size: 11px;
+}
+
+.btn-link {
+  background: transparent;
+  color: #38bdf8;
+  padding: 2px 0;
+  font-size: 11px;
+  text-align: left;
+  text-decoration: underline;
+}
+
+.feedback {
+  font-size: 11px;
+  min-height: 14px;
+}
+.feedback.error { color: #f87171; }
+.feedback.success { color: #4ade80; }
+
+.section-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #94a3b8;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.product-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.product-item {
+  background: #1e293b;
+  border-radius: 8px;
+  padding: 10px 12px;
+  border: 1px solid #334155;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.prod-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.prod-title {
+  font-weight: 600;
+  font-size: 12px;
+  color: #f1f5f9;
+  line-height: 1.3;
+}
+
+.prod-badge {
+  font-size: 11px;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.prod-details {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.prod-price {
+  font-weight: 700;
+  color: #38bdf8;
+}
+
+.prod-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.action-btn {
+  background: #334155;
+  color: #cbd5e1;
+  border: none;
+  border-radius: 4px;
+  padding: 3px 7px;
+  font-size: 10px;
+  cursor: pointer;
+}
+.action-btn:hover {
+  background: #475569;
+  color: #fff;
+}
+.action-btn.turbo-active {
+  background: #eab308;
+  color: #000;
+  font-weight: 700;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 24px 12px;
+  color: #64748b;
+  background: #1e293b;
+  border-radius: 8px;
+  border: 1px dashed #334155;
+}
+
+.empty-icon {
+  font-size: 28px;
+  margin-bottom: 6px;
+}
+
+.subtext {
+  font-size: 11px;
+  margin-top: 4px;
+  color: #475569;
+}
+
+.hidden {
+  display: none !important;
+}

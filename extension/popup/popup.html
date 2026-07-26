@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Amazon Stock Watcher</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="header">
+    <div class="brand">
+      <span class="logo">🛒</span>
+      <span class="title">Amazon Stock Watcher</span>
+    </div>
+    <div class="settings-btn" id="openSettingsBtn" title="Settings">⚙️</div>
+  </div>
+
+  <div class="status-bar">
+    <div class="status-item" id="serverStatus">
+      <span class="dot yellow">●</span> Server: Checking...
+    </div>
+    <div class="status-item" id="telegramStatus">
+      <span class="dot yellow">●</span> Telegram: Checking...
+    </div>
+  </div>
+
+  <div class="card offline-card hidden" id="offlineCard">
+    <div class="offline-title">🔴 Service Unavailable</div>
+    <div class="offline-msg">Your watches remain saved on the server. We'll reconnect automatically.</div>
+    <button class="btn btn-secondary" id="retryBtn">Retry Connection</button>
+  </div>
+
+  <div class="card telegram-banner hidden" id="telegramBanner">
+    <div class="banner-text">
+      <strong>Connect Telegram for Alerts</strong><br>
+      Get instant stock alerts on your phone.
+    </div>
+    <button class="btn btn-primary btn-sm" id="connectTelegramBtn">Connect Telegram</button>
+  </div>
+
+  <div class="card add-card">
+    <div class="input-group">
+      <input type="text" id="productUrlInput" placeholder="Paste Amazon product URL (amazon.in)..." />
+      <button class="btn btn-primary" id="watchBtn">👀 Watch</button>
+    </div>
+    <button class="btn btn-link hidden" id="useCurrentTabBtn">📍 Watch Current Page</button>
+    <div class="feedback" id="feedback"></div>
+  </div>
+
+  <div class="section-title">
+    <span>WATCHING (<span id="watchCount">0</span>/<span id="watchLimit">5</span>)</span>
+  </div>
+
+  <div class="product-list" id="productList">
+    <div class="empty-state" id="emptyState">
+      <div class="empty-icon">📦</div>
+      <div>No products watched yet.</div>
+      <div class="subtext">Paste an Amazon link above to get started.</div>
+    </div>
+  </div>
+
+  <script src="../js/config.js"></script>
+  <script src="../js/storage.js"></script>
+  <script src="../js/auth.js"></script>
+  <script src="../js/api.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

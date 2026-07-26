@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Amazon Stock Watcher - Settings</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <div class="container">
+    <h2>⚙️ Amazon Stock Watcher Settings</h2>
+
+    <div class="card">
+      <div class="form-group">
+        <label for="backendUrlInput">Backend Server URL</label>
+        <input type="text" id="backendUrlInput" placeholder="http://localhost:8000" />
+        <div class="help-text">Set your hosted backend API URL (e.g., https://api.yourdomain.com).</div>
+      </div>
+      <button class="btn btn-primary" id="saveBtn">Save Settings</button>
+      <div class="feedback" id="feedback"></div>
+    </div>
+
+    <div class="card">
+      <h3>Device Identity</h3>
+      <div class="info-row">
+        <span>Public User ID:</span>
+        <code id="publicIdVal">Loading...</code>
+      </div>
+    </div>
+  </div>
+
+  <script src="../js/config.js"></script>
+  <script src="../js/storage.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>
