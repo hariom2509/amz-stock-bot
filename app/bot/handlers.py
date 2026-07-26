@@ -8,7 +8,8 @@ User Experience:
   - User opens bot and sends any Amazon.in product link directly.
   - Bare Amazon URLs automatically add the product to the user's watchlist.
   - Returns formatted current stock status immediately.
-  - Identity is 100% managed via Telegram chat_id (no extension credentials needed).
+  - Interactive /list view with Stop (Pause), Start (Resume), Remove, and Open buttons.
+  - Identity is 100% managed via Telegram chat_id.
 """
 from __future__ import annotations
 
@@ -32,7 +33,12 @@ from app.config import Settings
 from app.database import repository as repo
 from app.database.models import WatchedProduct, StockStatus, MonitoringMode
 from app.utils.urls import normalize_url, looks_like_amazon_url
-from app.bot.keyboards import buy_now_keyboard, product_action_keyboard, confirm_remove_keyboard
+from app.bot.keyboards import (
+    buy_now_keyboard,
+    product_action_keyboard,
+    confirm_remove_keyboard,
+    list_item_keyboard,
+)
 from app.alerts.telegram import AlertManager, _escape
 from app.telegram import linking as telegram_linking
 
@@ -130,7 +136,6 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _reply(update, text)
 
 
-
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     settings: Settings = context.bot_data["settings"]
     if not await _check_auth(update, settings):
@@ -141,11 +146,11 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "<b>Adding Products:</b>\n"
         "Simply send any Amazon.in product link directly to the bot.\n\n"
         "<b>Managing Products:</b>\n"
-        "/list — Show your active watches\n"
+        "/list — Show your active watches with Stop / Start buttons\n"
         "/status &lt;ASIN&gt; — Detailed status\n"
         "/check &lt;ASIN&gt; — Force an immediate check\n"
         "/remove &lt;ASIN&gt; — Stop monitoring and remove\n"
-        "/pause &lt;ASIN&gt; — Pause monitoring\n"
+        "/pause &lt;ASIN&gt; — Stop monitoring\n"
         "/resume &lt;ASIN&gt; — Resume monitoring\n\n"
         "<b>Speed:</b>\n"
         "/turbo &lt;ASIN&gt; — Enable Turbo monitoring (⚡)\n"
@@ -213,7 +218,8 @@ async def _handle_watch_url(
             f"<b>{_escape(existing.display_title)}</b>\n"
             f"ASIN: <code>{asin}</code>\n"
             f"Status: {existing.status_emoji} {existing.display_status}\n\n"
-            f"Use /status {asin} to see details."
+            f"Use /list to manage your watches.",
+            reply_markup=list_item_keyboard(existing.asin, existing.monitoring_enabled, existing.url),
         )
         return
 
@@ -258,8 +264,9 @@ async def _do_immediate_check_and_report(
             f"👀 <b>WATCHING</b>\n\n"
             f"ASIN: <code>{product.asin}</code>\n\n"
             f"⚠️ <b>Initial Check Error</b>\n"
-            f"Monitoring: <b>Active</b>\n\n"
-            f"I'll alert you automatically when this becomes available."
+            f"Monitoring: <b>Active (24/7)</b>\n\n"
+            f"I'll alert you automatically when this becomes available.",
+            reply_markup=list_item_keyboard(product.asin, True, product.url),
         )
         await scheduler.trigger_immediate_check(product)
         return
@@ -297,20 +304,21 @@ async def _do_immediate_check_and_report(
             reply_markup=keyboard,
         )
     else:
-        open_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔗 Open Amazon", url=product.url)]])
+        item_kb = list_item_keyboard(product.asin, True, product.url)
         await alert_manager.send_message(
             chat_id,
             f"👀 <b>WATCHING</b>\n\n"
             f"<b>{_escape(title)}</b>\n\n"
             f"🔴 <b>Currently Out of Stock</b>\n"
             f"💰 {price_line}\n\n"
-            f"Monitoring: <b>Active</b>\n\n"
+            f"Monitoring: <b>Active 24/7</b>\n\n"
             f"I'll alert you automatically when this becomes available.",
-            reply_markup=open_kb,
+            reply_markup=item_kb,
         )
 
 
 async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send an interactive card for each watched product with Stop / Start / Remove buttons."""
     settings: Settings = context.bot_data["settings"]
     if not await _check_auth(update, settings):
         return
@@ -326,16 +334,20 @@ async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
 
-    lines = [f"👀 <b>YOUR WATCHES ({len(products)})</b>\n"]
+    await _reply(update, f"👀 <b>YOUR WATCHES ({len(products)})</b>")
 
     for i, p in enumerate(products, 1):
-        lines.append(
-            f"{i}. <b>{_escape(p.display_title)}</b>\n"
-            f"   {p.status_emoji} {p.display_status} | {p.display_price}\n"
-            f"   ASIN: <code>{p.asin}</code> | Last checked: {_format_last_checked(p)}"
+        status_text = "Active (Watching 24/7)" if p.monitoring_enabled else "Stopped (Paused)"
+        card_text = (
+            f"<b>{i}. {_escape(p.display_title)}</b>\n\n"
+            f"Status: {p.status_emoji} <b>{p.display_status}</b>\n"
+            f"Price: <b>{p.display_price}</b>\n"
+            f"ASIN: <code>{p.asin}</code>\n"
+            f"Monitoring: <b>{status_text}</b>\n"
+            f"Last Checked: {_format_last_checked(p)}"
         )
-
-    await _reply(update, "\n\n".join(lines))
+        kb = list_item_keyboard(p.asin, p.monitoring_enabled, p.url)
+        await _reply(update, card_text, reply_markup=kb)
 
 
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -355,7 +367,11 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await _reply(update, f"❌ No product with ASIN <code>{asin}</code> found in your watchlist.")
         return
 
-    await _reply(update, _format_product_detail(product), reply_markup=buy_now_keyboard(product.url))
+    await _reply(
+        update,
+        _format_product_detail(product),
+        reply_markup=list_item_keyboard(product.asin, product.monitoring_enabled, product.url),
+    )
 
 
 async def cmd_check(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -425,8 +441,8 @@ async def cmd_pause(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     await _reply(
         update,
-        f"⏸ Monitoring <b>paused</b> for <code>{asin}</code>.\n\n"
-        f"Use /resume {asin} to restart monitoring."
+        f"🛑 Monitoring <b>stopped</b> for <code>{asin}</code>.\n\n"
+        f"Use /resume {asin} to start watching again."
     )
 
 
@@ -567,7 +583,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await query.message.reply_text(
                 _format_product_detail(product),
                 parse_mode="HTML",
-                reply_markup=buy_now_keyboard(product.url),
+                reply_markup=list_item_keyboard(product.asin, product.monitoring_enabled, product.url),
                 disable_web_page_preview=True,
             )
         else:
@@ -586,8 +602,31 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     elif data.startswith("pause:"):
         asin = data.split(":", 1)[1]
         await repo.set_monitoring_enabled(settings.database_path, chat_id, asin, False)
-        await query.edit_message_text(
-            f"⏸ Monitoring paused for <code>{asin}</code>.\nUse /resume {asin} to restart.",
+        product = await repo.get_product(settings.database_path, chat_id, asin)
+        if product:
+            try:
+                kb = list_item_keyboard(asin, False, product.url)
+                await query.edit_message_reply_markup(reply_markup=kb)
+            except Exception:
+                pass
+        await query.message.reply_text(
+            f"🛑 Monitoring <b>stopped</b> for <code>{asin}</code>.\nTap ▶️ Start anytime to resume.",
+            parse_mode="HTML",
+        )
+
+    elif data.startswith("resume:"):
+        asin = data.split(":", 1)[1]
+        await repo.set_monitoring_enabled(settings.database_path, chat_id, asin, True)
+        product = await repo.get_product(settings.database_path, chat_id, asin)
+        if product:
+            await scheduler.trigger_immediate_check(product)
+            try:
+                kb = list_item_keyboard(asin, True, product.url)
+                await query.edit_message_reply_markup(reply_markup=kb)
+            except Exception:
+                pass
+        await query.message.reply_text(
+            f"▶️ Monitoring <b>resumed</b> for <code>{asin}</code>.\nChecking Amazon now...",
             parse_mode="HTML",
         )
 
@@ -604,7 +643,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
 def _format_product_detail(product: WatchedProduct) -> str:
     mode_str = "⚡ Turbo" if product.monitoring_mode == MonitoringMode.TURBO else "🔄 Normal"
-    monitoring_str = "✅ Active" if product.monitoring_enabled else "⏸ Paused"
+    monitoring_str = "✅ Active (24/7)" if product.monitoring_enabled else "🛑 Stopped (Paused)"
 
     lines = [
         f"📦 <b>{_escape(product.display_title)}</b>",

@@ -4,7 +4,6 @@ Telegram inline keyboard builders.
 from __future__ import annotations
 
 from typing import List
-
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 
@@ -23,9 +22,25 @@ def product_action_keyboard(asin: str) -> InlineKeyboardMarkup:
             InlineKeyboardButton("🔄 Check Now", callback_data=f"check:{asin}"),
         ],
         [
-            InlineKeyboardButton("⏸ Pause", callback_data=f"pause:{asin}"),
+            InlineKeyboardButton("⏸ Stop", callback_data=f"pause:{asin}"),
             InlineKeyboardButton("🗑 Remove", callback_data=f"remove:{asin}"),
         ],
+    ])
+
+
+def list_item_keyboard(asin: str, is_active: bool, url: str) -> InlineKeyboardMarkup:
+    """Inline keyboard attached to items in /list with interactive Stop/Start toggle."""
+    toggle_btn = (
+        InlineKeyboardButton("🛑 Stop", callback_data=f"pause:{asin}")
+        if is_active
+        else InlineKeyboardButton("▶️ Start", callback_data=f"resume:{asin}")
+    )
+    return InlineKeyboardMarkup([
+        [
+            toggle_btn,
+            InlineKeyboardButton("🗑 Remove", callback_data=f"remove:{asin}"),
+            InlineKeyboardButton("🔗 Open Amazon", url=url),
+        ]
     ])
 
 
