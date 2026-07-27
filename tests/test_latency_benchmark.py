@@ -48,10 +48,14 @@ class MockAlertManager:
 @pytest.mark.asyncio
 async def test_internal_pipeline_latency_benchmark():
     import uuid
+    from app.database.db import init_db
     db = f"data/test_benchmark_{uuid.uuid4().hex[:8]}.db"
     chat_id = 12345678
     asin = "B0BENCHMARK1"
     url = f"https://www.amazon.in/dp/{asin}"
+
+    # Initialize the schema on the fresh DB
+    await init_db(db)
 
     # Setup database record
     await repo.add_product(db, chat_id, asin, url)

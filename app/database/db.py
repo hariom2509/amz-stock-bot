@@ -25,8 +25,9 @@ SCHEMA_VERSION = 2
 # Global Connection Pool for PostgreSQL
 _PG_POOL: Optional[Any] = None
 
-# Persistent SQLite connection singleton — avoids open/close overhead per call
-_SQLITE_CONN: Optional[Any] = None
+# Persistent SQLite connection pool — keyed by abs db_path, one conn per database file
+_SQLITE_CONNS: dict = {}
+
 
 
 def is_postgres(target: str) -> bool:

@@ -113,9 +113,11 @@ class AmazonClient:
 
     def __init__(self, timeout_seconds: int = 15, **kwargs) -> None:
         # Accept but ignore legacy kwargs (e.g. scraper_api_key) for compat
+        # Use 8s read timeout — fast fail, move to next tier quickly
+        read_timeout = min(float(timeout_seconds), 8.0)
         self._timeout = httpx.Timeout(
-            connect=10.0,
-            read=float(timeout_seconds),
+            connect=8.0,
+            read=read_timeout,
             write=5.0,
             pool=5.0,
         )
@@ -153,9 +155,9 @@ class AmazonClient:
         tier_urls = _build_tier_urls(asin)
 
         for tier_idx, (tier_url, tier_name) in enumerate(tier_urls):
-            # Small jitter between tiers to look human
+            # Minimal pause between tiers — just enough to not look like hammering
             if tier_idx > 0:
-                await asyncio.sleep(random.uniform(0.5, 1.5))
+                await asyncio.sleep(random.uniform(0.05, 0.15))
 
             headers = _mobile_headers(lang) if tier_idx == 0 else _desktop_headers(lang)
 

@@ -273,12 +273,9 @@ async def _do_immediate_check_and_report(
     alert_manager: AlertManager = context.bot_data["alert_manager"]
     chat_id = update.effective_chat.id
 
-    html, error = None, None
-    for attempt in range(3):
-        html, error = await http_client.fetch_product_page(product.url, product.asin)
-        if not error:
-            break
-        await asyncio.sleep(1.0)
+    # Single attempt for instant user feedback — scheduler handles retries every 15s
+    html, error = await http_client.fetch_product_page(product.url, product.asin)
+
 
     if error:
         err_text = (
