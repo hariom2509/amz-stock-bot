@@ -25,6 +25,9 @@ SCHEMA_VERSION = 2
 # Global Connection Pool for PostgreSQL
 _PG_POOL: Optional[Any] = None
 
+# Persistent SQLite connection singleton — avoids open/close overhead per call
+_SQLITE_CONN: Optional[Any] = None
+
 
 def is_postgres(target: str) -> bool:
     target = target.lower()
@@ -46,6 +49,21 @@ async def get_pg_pool(db_url: str) -> Any:
         await _PG_POOL.open()
         logger.info("PostgreSQL AsyncConnectionPool opened successfully!")
     return _PG_POOL
+
+
+async def get_sqlite_conn(db_path: str) -> Any:
+    """Return the persistent aiosqlite connection, creating it once if needed."""
+    global _SQLITE_CONN
+    if _SQLITE_CONN is None:
+        path = Path(db_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _SQLITE_CONN = await aiosqlite.connect(db_path)
+        await _SQLITE_CONN.execute("PRAGMA journal_mode=WAL")
+        await _SQLITE_CONN.execute("PRAGMA foreign_keys=ON")
+        await _SQLITE_CONN.execute("PRAGMA synchronous=NORMAL")
+        await _SQLITE_CONN.execute("PRAGMA cache_size=-32000")   # 32 MB page cache
+        logger.info(f"Persistent SQLite connection opened: {db_path}")
+    return _SQLITE_CONN
 
 
 class DatabaseConnection:
@@ -73,20 +91,16 @@ class DatabaseConnection:
             self._pool_conn_ctx = pool.connection()
             self._conn = await self._pool_conn_ctx.__aenter__()
         else:
-            db_path = Path(self.db_target)
-            db_path.parent.mkdir(parents=True, exist_ok=True)
-            self._conn = await aiosqlite.connect(self.db_target)
-            await self._conn.execute("PRAGMA journal_mode=WAL")
-            await self._conn.execute("PRAGMA foreign_keys=ON")
+            # Reuse persistent connection — no open/close overhead per call
+            self._conn = await get_sqlite_conn(self.db_target)
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         if self.is_pg:
             if self._pool_conn_ctx:
                 await self._pool_conn_ctx.__aexit__(exc_type, exc_val, exc_tb)
-        else:
-            if self._conn:
-                await self._conn.close()
+        # SQLite: do NOT close — we keep the singleton connection alive
+
 
     async def execute(self, query: str, params: tuple = ()) -> Any:
         if self.is_pg:

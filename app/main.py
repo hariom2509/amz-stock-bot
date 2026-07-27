@@ -71,6 +71,7 @@ async def lifespan(app: FastAPI):
         Application.builder()
         .token(settings.telegram_bot_token)
         .request(tg_request)
+        .concurrent_updates(True)   # Allow commands to run in parallel — no more queuing!
         .build()
     )
 
