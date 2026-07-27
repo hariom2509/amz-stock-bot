@@ -52,18 +52,20 @@ async def get_pg_pool(db_url: str) -> Any:
 
 
 async def get_sqlite_conn(db_path: str) -> Any:
-    """Return the persistent aiosqlite connection, creating it once if needed."""
-    global _SQLITE_CONN
-    if _SQLITE_CONN is None:
+    """Return the persistent aiosqlite connection for this db_path, creating it once."""
+    global _SQLITE_CONNS
+    abs_path = str(Path(db_path).resolve())
+    if abs_path not in _SQLITE_CONNS:
         path = Path(db_path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        _SQLITE_CONN = await aiosqlite.connect(db_path)
-        await _SQLITE_CONN.execute("PRAGMA journal_mode=WAL")
-        await _SQLITE_CONN.execute("PRAGMA foreign_keys=ON")
-        await _SQLITE_CONN.execute("PRAGMA synchronous=NORMAL")
-        await _SQLITE_CONN.execute("PRAGMA cache_size=-32000")   # 32 MB page cache
+        conn = await aiosqlite.connect(db_path)
+        await conn.execute("PRAGMA journal_mode=WAL")
+        await conn.execute("PRAGMA foreign_keys=ON")
+        await conn.execute("PRAGMA synchronous=NORMAL")
+        await conn.execute("PRAGMA cache_size=-32000")   # 32 MB page cache
+        _SQLITE_CONNS[abs_path] = conn
         logger.info(f"Persistent SQLite connection opened: {db_path}")
-    return _SQLITE_CONN
+    return _SQLITE_CONNS[abs_path]
 
 
 class DatabaseConnection:

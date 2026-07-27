@@ -223,43 +223,51 @@ class AmazonClient:
 
 
 def _is_captcha_page(html: str, url) -> bool:
-    """Detect Amazon CAPTCHA / robot-check pages."""
+    """Detect Amazon CAPTCHA / robot-check pages.
+    
+    IMPORTANT: Must only match ACTUAL captcha pages, not normal product pages.
+    Amazon product pages contain the word 'captcha' in their scripts/divs, so
+    bare substring matching causes false positives on every successful fetch.
+    Use only phrases that appear EXCLUSIVELY on Amazon's error/captcha page.
+    """
     url_str = str(url).lower()
-    if "validatecaptcha" in url_str or "/errors/" in url_str:
+    # URL-based detection is the most reliable — CAPTCHA pages always redirect here
+    if "validatecaptcha" in url_str or "/errors/validatecaptcha" in url_str:
         return True
 
     html_lower = html.lower()
-    captcha_indicators = [
+
+    # These phrases ONLY appear on Amazon's actual CAPTCHA error page,
+    # never on normal product pages
+    captcha_page_only_phrases = [
         "sorry, we just need to make sure you're not a robot",
         "enter the characters you see below",
         "type the characters you see in this image",
-        "robot check",
-        "captcha",
+        "to discuss automated access to amazon data please contact",
+        "api.amazon.com/captcha",
         "validatecaptcha",
-        "automated access",
-        "to discuss automated access to amazon data",
     ]
-    return any(indicator in html_lower for indicator in captcha_indicators)
+    return any(phrase in html_lower for phrase in captcha_page_only_phrases)
 
 
 def _looks_like_product_page(html: str) -> bool:
     """
     Sanity check: does this HTML look like a real Amazon product page?
-    Avoids returning junk pages as 'success'.
+    Real Amazon product pages are always 50KB+.
     """
-    if len(html) < 5000:
+    if len(html) < 10000:
         return False
     html_lower = html.lower()
-    # Must have at least one of these core product-page markers
+    # Any one of these confirms it's a real product page (not a redirect/error page)
     product_markers = [
         "productdetails",
         "acrpopover",
         "add-to-cart",
-        "buy-now",
+        "buy-now-button",
         "availability",
         "producttitle",
-        "buybox",
         "a-price",
-        "b084",  # any ASIN-like pattern in the HTML
+        "dp-container",
+        "ppd",
     ]
     return any(marker in html_lower for marker in product_markers)

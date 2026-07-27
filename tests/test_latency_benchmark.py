@@ -47,7 +47,8 @@ class MockAlertManager:
 
 @pytest.mark.asyncio
 async def test_internal_pipeline_latency_benchmark():
-    db = "data/test_app.db"
+    import uuid
+    db = f"data/test_benchmark_{uuid.uuid4().hex[:8]}.db"
     chat_id = 12345678
     asin = "B0BENCHMARK1"
     url = f"https://www.amazon.in/dp/{asin}"
@@ -56,6 +57,7 @@ async def test_internal_pipeline_latency_benchmark():
     await repo.add_product(db, chat_id, asin, url)
     shared_product = await repo.get_product_by_asin(db, asin)
     assert shared_product is not None
+
 
     # In-stock Amazon HTML fixture
     in_stock_html = """
