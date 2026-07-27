@@ -302,26 +302,19 @@ async def _do_immediate_check_and_report(
 
     state = parse_product_page(html, product.asin)
 
-    new_status = StockStatus(state.status.value)
-    await repo.update_product_state(
-        settings.database_path,
-        product.id,
-        status=new_status,
-        title=state.title,
-        price=state.price,
-        consecutive_failures=0,
-    )
-
-    title = state.title or f"ASIN: {product.asin}"
-    price_line = f"₹{state.price}" if state.price else "Price: Unknown"
-
     if state.status == AmazonStatus.IN_STOCK and state.is_confident_in_stock:
+        # Update product state and mark alert sent
         await repo.update_product_state(
             settings.database_path,
             product.id,
+            status=StockStatus.IN_STOCK,
+            title=state.title,
+            price=state.price,
             alert_sent_for_current_stock_state=True,
             last_alerted_at=datetime.now(timezone.utc),
+            consecutive_failures=0,
         )
+
         keyboard = buy_now_keyboard(product.url)
         in_stock_text = (
             f"🚨 <b>THIS PRODUCT IS CURRENTLY AVAILABLE</b>\n\n"
@@ -337,7 +330,24 @@ async def _do_immediate_check_and_report(
                 await alert_manager.send_message(chat_id, in_stock_text, reply_markup=keyboard)
         else:
             await alert_manager.send_message(chat_id, in_stock_text, reply_markup=keyboard)
+
+        # Dispatch an actual Telegram push notification alert pop-up
+        try:
+            await alert_manager.send_in_stock_alert_to(chat_id, product, datetime.now(timezone.utc))
+        except Exception as e:
+            logger.error(f"Failed to send immediate in-stock push alert: {e}")
     else:
+        # Crucial fix: ALWAYS reset alert_sent_for_current_stock_state = False on OOS/UNKNOWN/BLOCKED
+        await repo.update_product_state(
+            settings.database_path,
+            product.id,
+            status=new_status,
+            title=state.title,
+            price=state.price,
+            alert_sent_for_current_stock_state=False,
+            consecutive_failures=0,
+        )
+
         item_kb = list_item_keyboard(product.asin, True, product.url)
         oos_text = (
             f"👀 <b>WATCHING (24/7)</b>\n\n"
@@ -354,6 +364,7 @@ async def _do_immediate_check_and_report(
                 await alert_manager.send_message(chat_id, oos_text, reply_markup=item_kb)
         else:
             await alert_manager.send_message(chat_id, oos_text, reply_markup=item_kb)
+
 
 
 async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
