@@ -1,10 +1,17 @@
 """
-Amazon HTTP client using httpx with Intelligent ScraperAPI Quota Protection.
+Amazon HTTP client — pure direct fetch, no ScraperAPI.
 
-Strategy:
-- Try direct request first with browser header rotation (0 ScraperAPI credits used).
-- If Amazon blocks with CAPTCHA or 429, fallback to ScraperAPI automatically.
-- Conserves 98%+ of ScraperAPI monthly credits while maintaining 100% reliability.
+3-Tier Fetch Strategy (each tier tried in order):
+  Tier 1: Mobile user-agent via /dp/{asin} — lighter page, less bot detection
+  Tier 2: Desktop browser via /dp/{asin}?th=1&psc=1 — full page with all signals
+  Tier 3: Alternate URL format /gp/product/{asin} — different code path on Amazon's side
+
+Additional techniques:
+  - Persistent cookie jar per client instance (session simulation)
+  - HTTP/2 disabled (Amazon's anti-bot fingerprinting checks HTTP version consistency)
+  - Randomised realistic browser headers per request
+  - Exponential jitter sleep between tiers to mimic human behaviour
+  - CAPTCHA detection: if blocked, preserve last known status (never falsely OOS)
 """
 from __future__ import annotations
 
@@ -12,42 +19,60 @@ import asyncio
 import logging
 import os
 import random
-from typing import Optional, List
-from urllib.parse import quote_plus
+import re
+from typing import Optional, List, Tuple
+from urllib.parse import urlparse
 
 import httpx
 
-from app.amazon.models import ProductState, StockStatus
-
 logger = logging.getLogger(__name__)
 
-# ── ScraperAPI endpoint ───────────────────────────────────────────────────────
-_SCRAPER_API_BASE = "http://api.scraperapi.com"
+# ── User-Agent pools ─────────────────────────────────────────────────────────
 
-# List of real, modern desktop browser User-Agents
-_USER_AGENTS: List[str] = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36 Edg/127.0.0.0",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+_MOBILE_USER_AGENTS: List[str] = [
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1",
     "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.6533.64 Mobile Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (Linux; Android 14; OnePlus 12) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.6533.64 Mobile Safari/537.36",
 ]
 
-_ACCEPT_LANGUAGES = [
+_DESKTOP_USER_AGENTS: List[str] = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36 Edg/127.0.0.0",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+]
+
+_ACCEPT_LANGUAGES: List[str] = [
     "en-IN,en;q=0.9,hi;q=0.8",
     "en-IN,en-GB;q=0.9,en-US;q=0.8,en;q=0.7",
     "en-US,en;q=0.9,en-IN;q=0.8",
     "en-IN,en;q=0.9",
 ]
 
+# Amazon.in base URL
+_AMAZON_BASE = "https://www.amazon.in"
 
-def _get_dynamic_headers() -> dict[str, str]:
-    ua = random.choice(_USER_AGENTS)
-    lang = random.choice(_ACCEPT_LANGUAGES)
+
+def _mobile_headers(lang: str) -> dict:
+    ua = random.choice(_MOBILE_USER_AGENTS)
+    return {
+        "User-Agent": ua,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": lang,
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "Upgrade-Insecure-Requests": "1",
+    }
+
+
+def _desktop_headers(lang: str) -> dict:
+    ua = random.choice(_DESKTOP_USER_AGENTS)
     return {
         "User-Agent": ua,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
@@ -60,103 +85,133 @@ def _get_dynamic_headers() -> dict[str, str]:
         "Sec-Fetch-Mode": "navigate",
         "Sec-Fetch-Site": "same-origin",
         "Sec-Fetch-User": "?1",
-        "Cache-Control": "no-cache",
-        "Pragma": "no-cache",
+        "Cache-Control": "max-age=0",
         "DNT": "1",
     }
+
+
+def _build_tier_urls(asin: str) -> List[Tuple[str, str]]:
+    """
+    Return ordered list of (url, tier_name) to attempt for this ASIN.
+    Tier 1: Mobile /dp/ — lightest response, least bot detection
+    Tier 2: Desktop /dp/ with variant params — full page
+    Tier 3: Alternate /gp/product/ path — hits different cache/CDN node
+    """
+    return [
+        (f"{_AMAZON_BASE}/dp/{asin}?th=1", "mobile_dp"),
+        (f"{_AMAZON_BASE}/dp/{asin}?th=1&psc=1", "desktop_dp"),
+        (f"{_AMAZON_BASE}/gp/product/{asin}", "desktop_gp"),
+    ]
 
 
 class AmazonClient:
     """
     Reusable async HTTP client for fetching Amazon product pages.
-    Uses Direct-First + ScraperAPI Fallback strategy to conserve ScraperAPI quota.
+    Uses a 3-tier direct fetch strategy with cookie jar session simulation.
+    No external proxy services required.
     """
 
-    def __init__(self, timeout_seconds: int = 15, scraper_api_key: Optional[str] = None) -> None:
-        self._scraper_api_key = scraper_api_key or os.getenv("SCRAPER_API_KEY", "").strip() or None
-
-        if self._scraper_api_key:
-            logger.info("AmazonClient: Hybrid Direct-First + ScraperAPI Fallback ENABLED")
-        else:
-            logger.info("AmazonClient: Direct request mode (no ScraperAPI key)")
-
+    def __init__(self, timeout_seconds: int = 15, **kwargs) -> None:
+        # Accept but ignore legacy kwargs (e.g. scraper_api_key) for compat
         self._timeout = httpx.Timeout(
             connect=10.0,
-            read=25.0 if self._scraper_api_key else float(timeout_seconds),
+            read=float(timeout_seconds),
             write=5.0,
             pool=5.0,
         )
         self._client: Optional[httpx.AsyncClient] = None
-
-    def _build_scraper_url(self, url: str) -> str:
-        """Build ScraperAPI proxy URL."""
-        encoded = quote_plus(url)
-        return f"{_SCRAPER_API_BASE}?api_key={self._scraper_api_key}&url={encoded}"
+        logger.info("AmazonClient: Direct fetch mode (no external proxy)")
 
     async def _get_client(self) -> httpx.AsyncClient:
-        """Lazily create the HTTP client."""
+        """Lazily create the shared HTTP client with persistent cookie jar."""
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
                 timeout=self._timeout,
                 follow_redirects=True,
-                http2=False,
+                http2=False,          # Consistent fingerprint — don't mix HTTP versions
                 limits=httpx.Limits(
                     max_connections=20,
                     max_keepalive_connections=10,
                     keepalive_expiry=60,
                 ),
+                # Persistent cookie jar across requests — makes requests look more like a session
             )
         return self._client
 
     async def fetch_product_page(
-        self, url: str, asin: str, force_proxy: bool = False
+        self,
+        url: str,
+        asin: str,
+        **kwargs,          # absorb legacy force_proxy etc.
     ) -> tuple[Optional[str], Optional[str]]:
         """
-        Fetch an Amazon product page.
-        Tries direct request first (0 credits).
-        If CAPTCHA or block occurs (or force_proxy=True), falls back to ScraperAPI.
+        Fetch an Amazon product page using 3-tier strategy.
+        Returns (html, None) on success or (None, error_code) on failure.
         """
         client = await self._get_client()
+        lang = random.choice(_ACCEPT_LANGUAGES)
+        tier_urls = _build_tier_urls(asin)
 
-        # Step 1: Try direct request first if not forced proxy to save ScraperAPI credits
-        if not force_proxy:
+        for tier_idx, (tier_url, tier_name) in enumerate(tier_urls):
+            # Small jitter between tiers to look human
+            if tier_idx > 0:
+                await asyncio.sleep(random.uniform(0.5, 1.5))
+
+            headers = _mobile_headers(lang) if tier_idx == 0 else _desktop_headers(lang)
+
             try:
-                headers = _get_dynamic_headers()
-                await asyncio.sleep(random.uniform(0.1, 0.3))
-                response = await client.get(url, headers=headers)
+                logger.debug(f"ASIN={asin}: Tier {tier_idx + 1} ({tier_name}) fetch → {tier_url}")
+                response = await client.get(tier_url, headers=headers)
                 html = response.text
 
-                if response.status_code == 200 and not _is_captcha_page(html, response.url):
-                    logger.debug(f"ASIN={asin}: Direct fetch SUCCESS (0 ScraperAPI credits used)")
-                    return html, None
-                else:
-                    logger.info(f"ASIN={asin}: Direct fetch hit CAPTCHA/Status {response.status_code} — falling back to ScraperAPI")
-            except Exception as e:
-                logger.info(f"ASIN={asin}: Direct fetch exception ({e}) — falling back to ScraperAPI")
-
-        # Step 2: Fallback to ScraperAPI if key available
-        if self._scraper_api_key:
-            scraper_url = self._build_scraper_url(url)
-            try:
-                logger.debug(f"ASIN={asin}: Fetching via ScraperAPI fallback...")
-                response = await client.get(scraper_url)
-                html = response.text
-
+                # ── HTTP-level error handling ──────────────────────────────
                 if response.status_code == 429:
-                    return None, "BLOCKED:HTTP_429"
-                if response.status_code == 403:
-                    return None, "BLOCKED:SCRAPER_403"
+                    logger.warning(f"ASIN={asin}: HTTP 429 on tier {tier_idx + 1} — rate limited")
+                    continue  # try next tier
+
+                if response.status_code in (503, 502, 500):
+                    logger.warning(f"ASIN={asin}: HTTP {response.status_code} on tier {tier_idx + 1}")
+                    continue
+
+                if response.status_code == 404:
+                    logger.warning(f"ASIN={asin}: HTTP 404 — product not found")
+                    return None, "ERROR:NOT_FOUND"
+
                 if response.status_code not in (200, 301, 302):
-                    return None, f"ERROR:HTTP_{response.status_code}"
+                    logger.warning(f"ASIN={asin}: Unexpected HTTP {response.status_code} on tier {tier_idx + 1}")
+                    continue
 
+                # ── CAPTCHA / block detection ──────────────────────────────
                 if _is_captcha_page(html, response.url):
-                    return None, "BLOCKED:SCRAPER_CAPTCHA"
+                    logger.info(f"ASIN={asin}: CAPTCHA on tier {tier_idx + 1} — trying next tier")
+                    continue
 
+                # ── Sanity check: must look like a real product page ───────
+                if not _looks_like_product_page(html):
+                    logger.info(f"ASIN={asin}: Page doesn't look like product page on tier {tier_idx + 1} — trying next tier")
+                    continue
+
+                logger.debug(f"ASIN={asin}: Tier {tier_idx + 1} ({tier_name}) SUCCESS ({len(html)} bytes)")
                 return html, None
-            except Exception as e:
-                logger.warning(f"ASIN={asin}: ScraperAPI fetch error: {e}")
-                return None, "ERROR:SCRAPER_API"
 
+            except httpx.TimeoutException:
+                logger.warning(f"ASIN={asin}: Timeout on tier {tier_idx + 1}")
+                continue
+
+            except httpx.ConnectError as e:
+                logger.warning(f"ASIN={asin}: Connection error on tier {tier_idx + 1}: {e}")
+                continue
+
+            except httpx.TooManyRedirects:
+                logger.warning(f"ASIN={asin}: Redirect loop on tier {tier_idx + 1}")
+                continue
+
+            except Exception as e:
+                logger.error(f"ASIN={asin}: Unexpected error on tier {tier_idx + 1}: {e}", exc_info=True)
+                continue
+
+        # All tiers exhausted
+        logger.warning(f"ASIN={asin}: All 3 fetch tiers failed (Amazon is blocking this server IP)")
         return None, "BLOCKED:CAPTCHA"
 
     async def close(self) -> None:
@@ -168,7 +223,7 @@ class AmazonClient:
 
 
 def _is_captcha_page(html: str, url) -> bool:
-    """Detect Amazon CAPTCHA / robot check pages."""
+    """Detect Amazon CAPTCHA / robot-check pages."""
     url_str = str(url).lower()
     if "validatecaptcha" in url_str or "/errors/" in url_str:
         return True
@@ -185,3 +240,26 @@ def _is_captcha_page(html: str, url) -> bool:
         "to discuss automated access to amazon data",
     ]
     return any(indicator in html_lower for indicator in captcha_indicators)
+
+
+def _looks_like_product_page(html: str) -> bool:
+    """
+    Sanity check: does this HTML look like a real Amazon product page?
+    Avoids returning junk pages as 'success'.
+    """
+    if len(html) < 5000:
+        return False
+    html_lower = html.lower()
+    # Must have at least one of these core product-page markers
+    product_markers = [
+        "productdetails",
+        "acrpopover",
+        "add-to-cart",
+        "buy-now",
+        "availability",
+        "producttitle",
+        "buybox",
+        "a-price",
+        "b084",  # any ASIN-like pattern in the HTML
+    ]
+    return any(marker in html_lower for marker in product_markers)

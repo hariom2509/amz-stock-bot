@@ -89,8 +89,8 @@ class ProductWatcher:
             if state.is_confident_in_stock and not product.alert_sent_for_current_stock_state:
                 should_alert = True
                 alert_sent_flag = True
-        elif new_status in (StockStatus.OUT_OF_STOCK, StockStatus.UNKNOWN):
-            # Reset alert flag when item goes out of stock so restock alerts trigger again
+        elif new_status in (StockStatus.OUT_OF_STOCK, StockStatus.UNKNOWN, StockStatus.BLOCKED, StockStatus.ERROR):
+            # Reset alert flag so restock alerts always fire after a blocked/OOS period
             alert_sent_flag = False
 
         await repo.update_product_state(
@@ -185,8 +185,8 @@ class ProductWatcher:
                     if state.is_confident_in_stock and not watch.alert_sent_for_current_stock_state:
                         should_alert = True
                         alert_sent_flag = True
-                elif new_status in (StockStatus.OUT_OF_STOCK, StockStatus.UNKNOWN):
-                    # Reset alert flag so future restocks alert again
+                elif new_status in (StockStatus.OUT_OF_STOCK, StockStatus.UNKNOWN, StockStatus.BLOCKED, StockStatus.ERROR):
+                    # Reset alert flag so future restocks always alert (even after blocked period)
                     alert_sent_flag = False
 
                 await repo.update_user_watch_state(

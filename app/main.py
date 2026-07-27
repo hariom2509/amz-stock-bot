@@ -56,8 +56,8 @@ async def lifespan(app: FastAPI):
 
     http_client = AmazonClient(
         timeout_seconds=settings.request_timeout_seconds,
-        scraper_api_key=settings.scraper_api_key,
     )
+
 
     # Configure Telegram HTTP Request timeouts
     tg_request = HTTPXRequest(

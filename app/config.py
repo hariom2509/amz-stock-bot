@@ -66,10 +66,6 @@ class Settings(BaseSettings):
     # ── HTTP Client ─────────────────────────────────────────────────────────
     request_timeout_seconds: int = 15
 
-    # ── ScraperAPI (optional — bypasses Amazon CAPTCHA blocks) ──────────────
-    # Get a free key at https://www.scraperapi.com (1000 free requests/month)
-    # Set SCRAPER_API_KEY env var in Render to enable
-    scraper_api_key: Optional[str] = None
 
     # ── Logging ─────────────────────────────────────────────────────────────
     log_level: str = "INFO"
